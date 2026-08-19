@@ -8,8 +8,8 @@ cd "$ROOT"
 ./scripts/build.sh
 
 cd "$ROOT/build"
-ZIP="在线-AI-悬浮窗-$(date +%Y%m%d).zip"
+ZIP="窥窗-$(date +%Y%m%d).zip"
 rm -f "$ZIP"
-ditto -c -k --sequesterRsrc --keepParent "在线 AI 悬浮窗.app" "$ZIP"
+ditto -c -k --sequesterRsrc --keepParent "窥窗.app" "$ZIP"
 
 echo "✔ 打包完成: $ROOT/build/$ZIP"

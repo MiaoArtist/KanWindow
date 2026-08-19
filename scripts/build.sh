@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ============================================================
-# 在线 AI 悬浮窗 —— 构建脚本
+# 窥窗 —— 构建脚本
 # 用法:
-#   ./scripts/build.sh              # 构建到 build/在线 AI 悬浮窗.app
+#   ./scripts/build.sh              # 构建到 build/窥窗.app
 #   ./scripts/build.sh install      # 构建后复制到 /Applications
 #   UNIVERSAL=1 ./scripts/build.sh  # 构建 arm64+x86_64 通用包
 # ============================================================
