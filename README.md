@@ -26,7 +26,7 @@
 | **⌘ ,** | 打开设置（窗口内按） | 固定 |
 | **⌘C / ⌘V / ⌘X / ⌘A** | 浮窗文本框复制/粘贴/剪切/全选 | 已内置编辑菜单 |
 
-> 状态栏：**左键** = 呼出弹窗；**右键** = 菜单（各组、显示全部组、隐藏全部组、设置、退出）。
+> 状态栏：**左键单击** = 呼出 / 收起弹窗（不弹菜单，点击不卡）；**右键** = 菜单（各组、显示全部组、隐藏全部组、设置、退出）。菜单每次都现做新的一份再弹出，不会在跟踪中改菜单导致卡死。
 
 ## ✨ 其它特性
 
@@ -36,6 +36,7 @@
 - 📋 **粘贴可用**：内置标准「编辑」菜单，WebView 文本框 ⌘V 正常。
 - 🥤 **轻量**：原生 App；组未打开不占网页进程。
 - 🔔 **常驻状态栏**：无 Dock 图标。
+- 🎨 **原创图标**：App 图标 + 顶栏模板图标由纯几何 SVG 设计（源文件 `Resources/*.svg` 在仓库），简明表达“可悬浮弹出的网页小窗”，无任何版权风险；亮/暗菜单栏都清晰。
 
 ## 🖥 环境要求
 
@@ -104,8 +105,16 @@ AIFloatWindow/
 │   ├── GroupController.swift          # 一组一窗：WebView+组内切站+闲置
 │   ├── GroupManager.swift             # 组编排 / 热键 / 显示全部
 │   └── SettingsWindowController.swift # 设置面板
-├── Resources/AppIcon.icns
-├── scripts/{build,package,make-icon}.sh
+├── Resources/
+│   ├── AppIcon.svg / MenuBarIcon.svg   # 原创图标设计源文件（SVG，便于再改）
+│   ├── AppIcon.icns                    # 渲染出的 App 图标
+│   └── MenuBarIcon.png(@2x)            # 顶栏模板图标
+├── scripts/
+│   ├── build.sh           # 构建 .app（arm64 / UNIVERSAL 双架构 + 签名）
+│   ├── package.sh         # 打发布 zip
+│   ├── render-icons.sh    # SVG → icns / 模板 png
+│   ├── template-png.swift # 把矢量图转成“黑不透明/白挖洞”模板图
+│   └── make-icon.sh/.swift# 旧版程序化图标（可留作参考）
 ├── Info.plist
 └── README.md
 ```

@@ -53,9 +53,15 @@ echo "==> 装配 App Bundle"
 cp Info.plist "$APP_DIR/Contents/Info.plist"
 /usr/bin/plutil -replace CFBundleIdentifier -string "$BUNDLE_ID" "$APP_DIR/Contents/Info.plist" 2>/dev/null || true
 
-# 可选：替换默认图标
+# 图标资源（App 图标 + 顶栏模板图标）
 if [ -f "Resources/AppIcon.icns" ]; then
   cp "Resources/AppIcon.icns" "$APP_DIR/Contents/Resources/AppIcon.icns"
+fi
+if [ -f "Resources/MenuBarIcon.png" ]; then
+  cp "Resources/MenuBarIcon.png" "$APP_DIR/Contents/Resources/MenuBarIcon.png"
+fi
+if [ -f "Resources/MenuBarIcon@2x.png" ]; then
+  cp "Resources/MenuBarIcon@2x.png" "$APP_DIR/Contents/Resources/MenuBarIcon@2x.png"
 fi
 
 # 写入 PkgInfo（部分系统对 WKWebView 友好）

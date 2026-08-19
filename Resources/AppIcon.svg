@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <!-- 在线 AI 悬浮窗 · App 图标
+       设计思路：蓝色圆角底承载一个白色“悬浮窗”主视觉，
+       上方标题圆点 + 内容条 = 网页/对话；右下角琥珀色亮点 = AI 智能；
+       底部白色小箭头 = “随时呼出的悬浮弹窗”。纯原创几何图形，规避版权。 -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3AA6FF"/>
+      <stop offset="1" stop-color="#0B5ED7"/>
+    </linearGradient>
+  </defs>
+
+  <!-- 圆角底色 -->
+  <rect x="64" y="64" width="896" height="896" rx="224" fill="url(#bg)"/>
+
+  <!-- 悬浮窗主体 -->
+  <rect x="228" y="236" width="568" height="404" rx="74" fill="#FFFFFF"/>
+
+  <!-- 标题栏 -->
+  <rect x="228" y="236" width="568" height="128" rx="74" fill="#E9F3FF"/>
+  <rect x="228" y="300" width="568" height="64" fill="#E9F3FF"/>
+
+  <!-- 标题栏圆点 -->
+  <circle cx="318" cy="300" r="15" fill="#2F9BFF"/>
+  <circle cx="366" cy="300" r="15" fill="#2F9BFF" opacity="0.65"/>
+  <circle cx="414" cy="300" r="15" fill="#2F9BFF" opacity="0.35"/>
+
+  <!-- 网页/对话内容条 -->
+  <rect x="320" y="422" width="384" height="58" rx="29" fill="#CBE4FF"/>
+  <rect x="320" y="504" width="384" height="58" rx="29" fill="#CBE4FF"/>
+  <rect x="320" y="586" width="240" height="58" rx="29" fill="#CBE4FF"/>
+
+  <!-- 右下角 AI 智能亮点 -->
+  <circle cx="740" cy="470" r="30" fill="#FFC53D"/>
+
+  <!-- 底部“可弹出”小箭头 -->
+  <path d="M430 640 L512 742 L594 640 Z" fill="#FFFFFF"/>
+</svg>

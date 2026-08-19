@@ -1,7 +1,7 @@
 import AppKit
 import UserNotifications
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private var manager: GroupManager!
     private var statusItem: NSStatusItem!
@@ -10,9 +10,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         manager = GroupManager(settings: SettingsStore.load())
-        manager.onSettingsChanged = { [weak self] in
-            self?.rebuildMenu()
-        }
 
         buildMainMenu()          // 编辑菜单 → 让 WebView 文本框能 ⌘C/⌘V/⌘X/⌘A
         setupStatusItem()
@@ -53,34 +50,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         return item
     }
 
-    // MARK: - 状态栏（左键=呼出/收起，右键=菜单）
+    // MARK: - 状态栏（左键=呼出弹窗，右键=弹菜单；不挂 menu，避免点击卡死）
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        if let button = statusItem.button {
+        guard let button = statusItem.button else { return }
+
+        if let icon = NSImage(named: "MenuBarIcon") {
+            icon.isTemplate = true
+            icon.size = NSSize(width: 18, height: 18)
+            button.image = icon
+        } else {
             button.image = NSImage(systemSymbolName: "bubble.left.and.bubble.right.fill",
                                    accessibilityDescription: Config.appName)
-            button.target = self
-            button.action = #selector(statusClicked)
-            button.sendAction(on: [.leftMouseUp])
         }
-        let menu = NSMenu()
-        menu.delegate = self
-        statusItem.menu = menu
-        rebuildMenu()
+        button.target = self
+        button.action = #selector(statusClicked)
+        // 左/右鼠标松开都发 action，自己在 action 里区分，从而不依赖 statusItem.menu
+        button.sendAction(on: [.leftMouseUp, .rightMouseUp])
     }
 
     @objc private func statusClicked() {
-        manager.toggle()
+        let event = NSApp.currentEvent
+        let isRightClick = event?.type == .rightMouseUp
+            || event?.type == .rightMouseDown
+            || (event?.type == .leftMouseUp && event?.modifierFlags.contains(.control) == true)
+
+        if isRightClick {
+            // 每次现做一份新菜单再弹出（绝不在跟踪过程中改菜单）
+            if let item = statusItem {
+                item.popUpMenu(buildMenu())
+            }
+        } else {
+            manager.toggle()
+        }
     }
 
-    func menuWillOpen(_ menu: NSMenu) {
-        rebuildMenu()
-    }
-
-    private func rebuildMenu() {
-        guard let menu = statusItem?.menu else { return }
-        menu.removeAllItems()
+    /// 现做一份右键菜单
+    private func buildMenu() -> NSMenu {
+        let menu = NSMenu()
 
         menu.addItem(switchItem(action: manager.settings.dAction, key: "⌥⌘D", selector: #selector(runDAction)))
         menu.addItem(switchItem(action: manager.settings.eAction, key: "⌥⌘E", selector: #selector(runEAction)))
@@ -110,6 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let quit = NSMenuItem(title: "退出 \(Config.appName)", action: #selector(quitClicked), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
+        return menu
     }
 
     /// D/E 动作菜单项（标题随配置变化）
