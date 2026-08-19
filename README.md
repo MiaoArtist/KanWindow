@@ -54,7 +54,7 @@ xcode-select --install
 ## 📦 构建 & 安装
 
 ```bash
-git clone <你的仓库地址> KanWindow
+git clone https://github.com/MiaoArtist/KanWindow.git KanWindow
 cd KanWindow
 ./scripts/build.sh            # 构建到 build/窥窗.app
 ./scripts/build.sh install    # 复制到 /Applications
