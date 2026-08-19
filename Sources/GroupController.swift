@@ -167,6 +167,7 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate {
 
         let wv = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
         wv.allowsMagnification = true
+        wv.customUserAgent = Config.userAgent   // 伪装较新 Safari，解决部分站点“浏览器版本过低”
         wv.navigationDelegate = self
         w.contentView = wv
         self.webView = wv

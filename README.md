@@ -1,4 +1,4 @@
-# 在线 AI 悬浮窗（AIFloatWindow）
+# 窥窗（KanWindow）
 
 > 一个免费的 macOS 原生悬浮窗小工具：**多组网址**，每组一个悬浮窗，组内塞任意多个网站（豆包 / DeepSeek / ChatGPT Web / 任何网页），**⌥⌘D/E 一键在组内切站**。顶栏点一下即呼出，随用随走。
 >
@@ -52,11 +52,11 @@ xcode-select --install
 ## 📦 构建 & 安装
 
 ```bash
-git clone <你的仓库地址> AIFloatWindow
-cd AIFloatWindow
-./scripts/build.sh            # 构建到 build/在线 AI 悬浮窗.app
+git clone <你的仓库地址> KanWindow
+cd KanWindow
+./scripts/build.sh            # 构建到 build/窥窗.app
 ./scripts/build.sh install    # 复制到 /Applications
-open "/Applications/在线 AI 悬浮窗.app"
+open "/Applications/窥窗.app"
 ```
 
 发布包：`在线-AI-悬浮窗-*.zip`，解压拖进「应用程序」即可。
@@ -65,7 +65,7 @@ open "/Applications/在线 AI 悬浮窗.app"
 
 全局快捷键需要「辅助功能」权限：
 1. 弹窗里点「打开系统设置」→ 隐私与安全性 → 辅助功能；
-2. 勾选「在线 AI 悬浮窗」；约 2 秒后自动启用（状态栏图标闪 ✓）。
+2. 勾选「窥窗」；约 2 秒后自动启用（状态栏图标闪 ✓）。
 > 未授权也能用：点顶栏图标或右键菜单都能呼出浮窗。
 
 ## 🎛 设置面板速览（三个“框”）
@@ -82,9 +82,9 @@ v0.2 的“浮窗”/ v0.3 的“分组 + ⌥⌘D/E 动作 + 组快捷方式”�
 
 ## 🛠 配置存储
 
-UserDefaults（bundle id `dev.miaoartist.aifloatwindow`）键 `AppSettings`，一份 JSON。备份/查看：
+UserDefaults（bundle id `dev.miaoartist.kanwindow`）键 `AppSettings`，一份 JSON。备份/查看：
 ```bash
-defaults export dev.miaoartist.aifloatwindow - -
+defaults export dev.miaoartist.kanwindow - -
 ```
 请优先用设置面板的导出/导入。
 
@@ -97,7 +97,7 @@ defaults export dev.miaoartist.aifloatwindow - -
 ## 📂 项目结构
 
 ```
-AIFloatWindow/
+KanWindow/
 ├── Sources/
 │   ├── main.swift                     # 入口（无 Dock 图标）
 │   ├── AppDelegate.swift              # 顶栏左/右键、编辑菜单、权限
@@ -140,6 +140,8 @@ AIFloatWindow/
 
 [MIT](LICENSE) © 2025 MiaoArtist
 
+
+**B 站提示“浏览器版本过低”？** 内置了较新的 Safari 用户代理（User-Agent），多数站点都会放行；如个别站点仍提示，告诉我域名我再针对性处理。
 ## 📣 Roadmap（欢迎 PR）
 
 - [ ] 组内网址拖拽排序

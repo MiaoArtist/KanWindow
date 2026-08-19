@@ -11,10 +11,10 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-APP_NAME="在线 AI 悬浮窗"
-EXECUTABLE="AIFloatWindow"
-BUNDLE_ID="dev.miaoartist.aifloatwindow"
-VERSION="0.1.0"
+APP_NAME="窥窗"
+EXECUTABLE="KanWindow"
+BUNDLE_ID="dev.miaoartist.kanwindow"
+VERSION="0.5.0"
 DEPLOY_TARGET="13.0"   # 最低支持 macOS 13（也就是本机 27.0 之前的所有版本）
 
 BUILD_DIR="$ROOT/build"

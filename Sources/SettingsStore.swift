@@ -5,42 +5,53 @@ final class SettingsStore {
 
     static let storageKey = "AppSettings"
 
-    /// 读取配置；自动把 v0.2(浮窗) / v0.3(组+D/E动作) 迁移到 v0.4(组+统一快捷键表)
+    /// 读取配置。自动做两类迁移：
+    /// ① 数据格式：v0.2(浮窗) / v0.3(组+D/E动作) → v0.4(组+统一快捷键表)
+    /// ② bundle id：旧版 `dev.miaoartist.aifloatwindow` 域 → 新版 `dev.miaoartist.kanwindow` 域（改名后不丢设置）
     static func load() -> AppSettings {
         let defaults = UserDefaults.standard
-        guard let data = defaults.data(forKey: storageKey) else {
-            return defaultsInstall()
-        }
 
-        // 1) 当前版
-        if let s = try? JSONDecoder().decode(AppSettings.self, from: data), !s.groups.isEmpty {
+        // 1) 新 bundle id 域
+        if let data = defaults.data(forKey: storageKey),
+           let s = decodeOrMigrate(data), !s.groups.isEmpty {
             return s
         }
 
-        // 2) v0.3 分组版（含 dAction/eAction + 组 hotKey）
+        // 2) 旧 bundle id 域（改名迁移）
+        if let old = UserDefaults(suiteName: Config.oldBundleIdentifier),
+           let data = old.data(forKey: storageKey),
+           let s = decodeOrMigrate(data), !s.groups.isEmpty {
+            save(s)     // 写入新域
+            return s
+        }
+
+        // 全新安装
+        return defaultsInstall()
+    }
+
+    private static func decodeOrMigrate(_ data: Data) -> AppSettings? {
+        // 当前版
+        if let s = try? JSONDecoder().decode(AppSettings.self, from: data), !s.groups.isEmpty {
+            return s
+        }
+        // v0.3 分组版
         if let legacy = try? JSONDecoder().decode(LegacyV3Settings.self, from: data),
            !legacy.groups.isEmpty {
-            let migrated = legacy.migrated()
-            save(migrated)
-            return migrated
+            return legacy.migrated()
         }
-
-        // 3) v0.2 浮窗版 → 组 + 默认快捷键
+        // v0.2 浮窗版
         if let legacy = try? JSONDecoder().decode(LegacyV2Settings.self, from: data),
            !legacy.panes.isEmpty {
-            let migrated = legacy.migrated()
-            save(migrated)
-            return migrated
+            return legacy.migrated()
         }
-
-        // 全新安装（吸收更早 single-window 版改过的 URL）
-        return defaultsInstall()
+        return nil
     }
 
     private static func defaultsInstall() -> AppSettings {
         var fresh = AppSettings.defaults()
         let defaults = UserDefaults.standard
-        if let url = defaults.string(forKey: "DoubaoURL"), fresh.groups.first?.sites.count ?? 0 > 0 {
+        if let url = defaults.string(forKey: "DoubaoURL") ?? UserDefaults(suiteName: Config.oldBundleIdentifier)?.string(forKey: "DoubaoURL"),
+           fresh.groups.first?.sites.count ?? 0 > 0 {
             fresh.groups[0].sites[0].url = url
         }
         save(fresh)

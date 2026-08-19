@@ -83,7 +83,7 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         root.orientation = .vertical
         root.alignment = .leading
         root.spacing = 10
-        root.edgeInsets = NSEdgeInsets(top: 14, left: 26, bottom: 14, right: 26)
+        root.edgeInsets = NSEdgeInsets(top: 14, left: 30, bottom: 14, right: 30)
         root.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(root)
         NSLayoutConstraint.activate([
@@ -92,6 +92,7 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
             root.topAnchor.constraint(equalTo: content.topAnchor),
             root.bottomAnchor.constraint(equalTo: content.bottomAnchor),
         ])
+        let contentWidth: CGFloat = 800 - 60   // 30 + 30 内边距 = 740
 
         // ===== ① 网址组 =====
         root.addArrangedSubview(sectionTitle("网址组"))
@@ -99,14 +100,15 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         groupsRow.orientation = .horizontal
         groupsRow.spacing = 16
         groupsRow.alignment = .top
+        groupsRow.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
         root.addArrangedSubview(groupsRow)
 
-        let groupsScroll = makeScrollTable(groupsTable, columns: [checkColumn("启用"), textColumn("组名", 300)])
-        groupsScroll.widthAnchor.constraint(equalToConstant: 420).isActive = true
+        let groupsScroll = makeScrollTable(groupsTable, columns: [checkColumn("启用"), textColumn("组名", 250)])
+        groupsScroll.widthAnchor.constraint(equalToConstant: 360).isActive = true
         groupsScroll.heightAnchor.constraint(equalToConstant: 132).isActive = true
         groupsRow.addArrangedSubview(groupsScroll)
 
-        groupNameField.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        groupNameField.widthAnchor.constraint(equalToConstant: 190).isActive = true
         groupNameField.font = .systemFont(ofSize: 12)
         groupNameField.target = self
         groupNameField.action = #selector(groupEditorChanged(_:))
@@ -147,20 +149,21 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         sitesRow.orientation = .horizontal
         sitesRow.spacing = 16
         sitesRow.alignment = .top
+        sitesRow.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
         root.addArrangedSubview(sitesRow)
 
-        sitesScroll = makeScrollTable(sitesTable, columns: [textColumn("名称", 150), textColumn("网址", 240)])
-        sitesScroll.widthAnchor.constraint(equalToConstant: 420).isActive = true
+        sitesScroll = makeScrollTable(sitesTable, columns: [textColumn("名称", 110), textColumn("网址", 230)])
+        sitesScroll.widthAnchor.constraint(equalToConstant: 360).isActive = true
         sitesScroll.heightAnchor.constraint(equalToConstant: 132).isActive = true
         sitesRow.addArrangedSubview(sitesScroll)
 
-        siteNameField.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        siteNameField.widthAnchor.constraint(equalToConstant: 190).isActive = true
         siteNameField.font = .systemFont(ofSize: 12)
         siteNameField.target = self
         siteNameField.action = #selector(siteEditorChanged(_:))
         siteNameField.placeholderString = "如：豆包"
 
-        siteUrlField.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        siteUrlField.widthAnchor.constraint(equalToConstant: 190).isActive = true
         siteUrlField.font = .systemFont(ofSize: 12)
         siteUrlField.target = self
         siteUrlField.action = #selector(siteEditorChanged(_:))
@@ -193,10 +196,11 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         hotkeysRow.orientation = .horizontal
         hotkeysRow.spacing = 16
         hotkeysRow.alignment = .top
+        hotkeysRow.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
         root.addArrangedSubview(hotkeysRow)
 
-        let hotkeysScroll = makeScrollTable(hotkeysTable, columns: [textColumn("功能", 240), textColumn("按键", 150)])
-        hotkeysScroll.widthAnchor.constraint(equalToConstant: 420).isActive = true
+        let hotkeysScroll = makeScrollTable(hotkeysTable, columns: [textColumn("功能", 230), textColumn("按键", 120)])
+        hotkeysScroll.widthAnchor.constraint(equalToConstant: 360).isActive = true
         hotkeysScroll.heightAnchor.constraint(equalToConstant: 132).isActive = true
         hotkeysRow.addArrangedSubview(hotkeysScroll)
 
@@ -248,17 +252,17 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         globalIdleField.placeholderString = "15"
         autoRow.addArrangedSubview(globalIdleField)
 
-        let explain = NSTextField(wrappingLabelWithString: "「自动关闭」：浮窗闲置满 N 分钟会【彻底关闭】并释放网页内存（不是只隐藏），需要时用快捷键再呼出，会回到原位置、原网站。设 0 表示不自动关闭。")
+        let explain = NSTextField(wrappingLabelWithString: "「自动关闭」：闲置满 N 分钟会彻底关闭该浮窗并释放网页内存（非只隐藏），需要用快捷键再呼出，会回到原位置、原网站；设 0 为不自动关闭。")
         explain.font = .systemFont(ofSize: 11)
         explain.textColor = .secondaryLabelColor
-        explain.widthAnchor.constraint(equalToConstant: 560).isActive = true
+        explain.widthAnchor.constraint(equalToConstant: 500).isActive = true
         autoRow.addArrangedSubview(explain)
 
         let buttonsRow = NSStackView()
         buttonsRow.orientation = .horizontal
         buttonsRow.spacing = 10
         buttonsRow.alignment = .centerY
-        buttonsRow.widthAnchor.constraint(equalToConstant: 748).isActive = true
+        buttonsRow.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
         root.addArrangedSubview(buttonsRow)
 
         buttonsRow.addArrangedSubview(standardButton("恢复默认", action: #selector(restoreClicked)))
@@ -295,7 +299,7 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
     private func separator() -> NSBox {
         let box = NSBox()
         box.boxType = .separator
-        box.widthAnchor.constraint(equalToConstant: 748).isActive = true
+        box.widthAnchor.constraint(equalToConstant: 740).isActive = true
         return box
     }
 
