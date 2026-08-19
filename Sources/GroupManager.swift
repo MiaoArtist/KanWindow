@@ -146,6 +146,16 @@ final class GroupManager {
         }
     }
 
+    // MARK: - 页面缩放（⌘+ / ⌘- / ⌘0，作用于当前浮窗）
+
+    func zoomActivePage(_ factor: CGFloat) {
+        activeController?.adjustZoom(factor)
+    }
+
+    func resetActivePageZoom() {
+        activeController?.resetZoom()
+    }
+
     // MARK: - 内部
 
     private func showController(_ c: GroupController) {

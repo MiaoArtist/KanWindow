@@ -60,7 +60,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         editMenu.addItem(textEditAction("粘贴", selector: #selector(NSText.paste(_:)), key: "v", shifted: false))
         editMenu.addItem(textEditAction("全选", selector: #selector(NSText.selectAll(_:)), key: "a", shifted: false))
 
+        // 显示菜单：页面缩放（⌘+ / ⌘- / ⌘0），作用于当前浮窗
+        let viewItem = NSMenuItem()
+        mainMenu.addItem(viewItem)
+        let viewMenu = NSMenu(title: "显示")
+        viewItem.submenu = viewMenu
+
+        viewMenu.addItem(zoomItem("放大", action: #selector(menuZoomIn), key: "+"))
+        viewMenu.addItem(zoomItem("缩小", action: #selector(menuZoomOut), key: "-"))
+        viewMenu.addItem(zoomItem("实际大小", action: #selector(menuZoomActual), key: "0"))
+
         NSApp.mainMenu = mainMenu
+    }
+
+    private func zoomItem(_ title: String, action: Selector, key: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: key)
+        item.keyEquivalentModifierMask = [.command]
+        item.target = self
+        return item
     }
 
     private func textEditAction(_ title: String, selector: Selector, key: String, shifted: Bool) -> NSMenuItem {
@@ -184,6 +201,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     @objc private func menuShowAll() { manager.showAll() }
     @objc private func menuHideAll() { manager.hideAll() }
+    @objc private func menuZoomIn() { manager.zoomActivePage(1.15) }
+    @objc private func menuZoomOut() { manager.zoomActivePage(1.0 / 1.15) }
+    @objc private func menuZoomActual() { manager.resetActivePageZoom() }
     @objc private func menuOpenSettings() { openSettings() }
     @objc private func quitClicked() {
         manager.saveAllFrames()

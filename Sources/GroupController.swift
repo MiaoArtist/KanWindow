@@ -4,7 +4,7 @@ import UserNotifications
 
 /// 网址组的悬浮窗：一个组 = 一个窗口，组内多个网址在这个窗口里切换。
 /// 窗口懒创建（第一次 show 才建），停用/删除时释放。
-final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate {
+final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
 
     let id: UUID
     private var config: GroupConfig
@@ -133,6 +133,23 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate {
         restartIdle()
     }
 
+    // MARK: - 页面缩放（⌘+ / ⌘- / ⌘0）
+
+    /// 按倍数放大/缩小页面（如 1.1 放大、1/1.1 缩小）
+    func adjustZoom(_ factor: CGFloat) {
+        guard let wv = webView, window != nil else { return }
+        let base = wv.magnification == 0 ? 1.0 : wv.magnification
+        wv.setMagnification(base * factor,
+                            centeredAt: NSPoint(x: wv.bounds.midX, y: wv.bounds.midY))
+        restartIdle()
+    }
+
+    func resetZoom() {
+        guard let wv = webView else { return }
+        wv.setMagnification(1.0, centeredAt: NSPoint(x: wv.bounds.midX, y: wv.bounds.midY))
+        restartIdle()
+    }
+
     private func restartIdle() {
         startIdle()
     }
@@ -169,6 +186,7 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate {
         wv.allowsMagnification = true
         wv.customUserAgent = Config.userAgent   // 伪装较新 Safari，解决部分站点“浏览器版本过低”
         wv.navigationDelegate = self
+        wv.uiDelegate = self
         w.contentView = wv
         self.webView = wv
 
@@ -226,6 +244,20 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate {
         hide()
         return false
     }
+
+    // MARK: - 新窗口 / 新标签页处理（target=_blank / window.open 的链接点不进去的问题）
+
+    func webView(_ webView: WKWebView,
+                 createWebViewWith configuration: WKWebViewConfiguration,
+                 for navigationAction: WKNavigationAction,
+                 windowFeatures: WKWindowFeatures) -> WKWebView? {
+        // 不另开窗口：把新标签页请求交给当前浮窗直接加载
+        if navigationAction.targetFrame == nil {
+            webView.load(navigationAction.request)
+        }
+        return nil
+    }
+
 
     // MARK: - 通知
 
