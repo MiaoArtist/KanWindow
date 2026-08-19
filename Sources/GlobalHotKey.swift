@@ -1,10 +1,25 @@
 import Carbon.HIToolbox
 
 /// 基于 Carbon 的全局热键注册。
-/// 无论焦点在哪个 App 都能触发；需要「辅助功能」权限才能生效。
+/// 支持动态「整体重挂」：设置变更后把全部热键一次性重新注册，避免逐个 diff。
+/// 需要「辅助功能」权限才能生效。
 final class GlobalHotKey {
 
     typealias Handler = () -> Void
+
+    /// 一次热键登记
+    struct Spec {
+        let id: UInt32
+        let keyCode: UInt32
+        let modifiers: UInt32
+        let handler: Handler
+        init(id: UInt32, keyCode: UInt32, modifiers: UInt32, handler: @escaping Handler) {
+            self.id = id
+            self.keyCode = keyCode
+            self.modifiers = modifiers
+            self.handler = handler
+        }
+    }
 
     enum Mods {
         static let option  = UInt32(optionKey)   // ⌥
@@ -13,8 +28,8 @@ final class GlobalHotKey {
         static let control = UInt32(controlKey)  // ⌃
     }
 
-    private static var registry: [UInt32: Handler] = [:]
-    private static var hotKeyRefs: [EventHotKeyRef] = []
+    private static var handlers: [UInt32: Handler] = [:]
+    private static var refs: [UInt32: EventHotKeyRef] = [:]
     private static var eventHandlerInstalled = false
 
     // 统一的按键回调（不捕获任何变量，符合 C 函数指针要求）
@@ -30,44 +45,10 @@ final class GlobalHotKey {
             &actualSize,
             &stored
         )
-        if status == noErr, let handler = registry[stored.id] {
+        if status == noErr, let handler = handlers[stored.id] {
             handler()
         }
         return noErr
-    }
-
-    /// 注册一个全局热键。
-    /// - Parameters:
-    ///   - keyCode: 键码（Space=49，D=2，E=14）
-    ///   - modifiers: 修饰键（Mods 组合）
-    ///   - id: 唯一 ID（用于回调定位）
-    @discardableResult
-    static func register(keyCode: UInt32,
-                         modifiers: UInt32,
-                         id: UInt32,
-                         handler: @escaping Handler) -> Bool {
-        // 事件处理器只需安装一次（macOS 同处理器重复安装会报错）
-        installEventHandlerIfNeeded()
-
-        let hotKeyID = EventHotKeyID(signature: UInt32(0x41494657), id: id)
-        var hotKeyRef: EventHotKeyRef?
-
-        let status = RegisterEventHotKey(
-            keyCode,
-            modifiers,
-            hotKeyID,
-            GetApplicationEventTarget(),
-            0,
-            &hotKeyRef
-        )
-        guard status == noErr, let ref = hotKeyRef else {
-            NSLog("GlobalHotKey 注册失败: keyCode=\(keyCode) mods=\(modifiers) status=\(status)")
-            return false
-        }
-
-        registry[id] = handler
-        hotKeyRefs.append(ref)
-        return true
     }
 
     /// 安装统一的按键回调（全局只装一次）
@@ -92,8 +73,43 @@ final class GlobalHotKey {
         }
     }
 
-    /// 是否已获得「辅助功能」权限（全局热键的前提）。
+    /// 注销全部并重新按 specs 注册（幂等，可随时调用）
+    static func apply(_ specs: [Spec]) {
+        for (_, ref) in refs {
+            UnregisterEventHotKey(ref)
+        }
+        refs.removeAll()
+        handlers.removeAll()
+
+        installEventHandlerIfNeeded()
+
+        for spec in specs {
+            let hotKeyID = EventHotKeyID(signature: UInt32(0x41494657), id: spec.id)
+            var hotKeyRef: EventHotKeyRef?
+            let status = RegisterEventHotKey(
+                spec.keyCode,
+                spec.modifiers,
+                hotKeyID,
+                GetApplicationEventTarget(),
+                0,
+                &hotKeyRef
+            )
+            if status == noErr, let ref = hotKeyRef {
+                refs[spec.id] = ref
+                handlers[spec.id] = spec.handler
+            } else {
+                NSLog("GlobalHotKey 注册失败: id=\(spec.id) key=\(spec.keyCode) mods=\(spec.modifiers) status=\(status)")
+            }
+        }
+    }
+
+    /// 是否已获得「辅助功能」权限（全局热键的前提）
     static func isTrusted() -> Bool {
         AXIsProcessTrusted()
+    }
+
+    /// 判断两套 (键码, 修饰键) 是否冲突（同一组合只能留一个）
+    static func isConflicting(_ a: HotKeyBinding, _ b: HotKeyBinding) -> Bool {
+        a.keyCode == b.keyCode && a.modifiers == b.modifiers
     }
 }

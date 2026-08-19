@@ -1,27 +1,31 @@
 import AppKit
 import UserNotifications
 
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
-    private var popup: PopupWindowController!
+    private var manager: PaneManager!
     private var statusItem: NSStatusItem!
+    private var settingsController: SettingsWindowController?
     private var trustPollTimer: Timer?
-    private var hotKeysRegistered = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        popup = PopupWindowController(size: NSSize(width: Config.windowWidth, height: Config.windowHeight))
+        manager = PaneManager(settings: SettingsStore.load())
+        manager.onSettingsChanged = { [weak self] in
+            self?.rebuildMenu()
+        }
+
         setupStatusItem()
-        requestNotificationPermissionIfNeeded()
+        requestNotificationPermission()
 
         if GlobalHotKey.isTrusted() {
-            registerHotKeys()
+            manager.applyHotkeys()
         } else {
             showAccessibilityAlert()
             scheduleTrustPoll()
         }
     }
 
-    // MARK: - 状态栏菜单（无 Dock 图标时唯一的常驻入口）
+    // MARK: - 状态栏菜单
 
     private func setupStatusItem() {
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
@@ -29,54 +33,97 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.image = NSImage(systemSymbolName: "bubble.left.and.bubble.right.fill",
                                    accessibilityDescription: Config.appName)
         }
-
         let menu = NSMenu()
-
-        let toggleItem = NSMenuItem(title: "显示 / 隐藏弹窗（⌥Space）",
-                                    action: #selector(toggleClicked), keyEquivalent: "")
-        toggleItem.target = self
-        menu.addItem(toggleItem)
-
-        menu.addItem(NSMenuItem.separator())
-
-        let doubaoItem = NSMenuItem(title: "切换到 豆包（⌥⌘D）",
-                                    action: #selector(switchToDoubao), keyEquivalent: "")
-        doubaoItem.target = self
-        menu.addItem(doubaoItem)
-
-        let deepseekItem = NSMenuItem(title: "切换到 DeepSeek（⌥⌘E）",
-                                      action: #selector(switchToDeepSeek), keyEquivalent: "")
-        deepseekItem.target = self
-        menu.addItem(deepseekItem)
-
-        menu.addItem(NSMenuItem.separator())
-        menu.addItem(NSMenuItem(title: "退出 \(Config.appName)", action: #selector(quitClicked), keyEquivalent: "q"))
-
+        menu.delegate = self
         statusItem.menu = menu
+        rebuildMenu()
     }
 
-    // MARK: - 全局热键
+    func menuWillOpen(_ menu: NSMenu) {
+        rebuildMenu()
+    }
 
-    private func registerHotKeys() {
-        guard !hotKeysRegistered else { return }
-        hotKeysRegistered = true
+    private func rebuildMenu() {
+        guard let menu = statusItem?.menu else { return }
+        menu.removeAllItems()
 
-        GlobalHotKey.register(keyCode: Config.HotKey.toggleKeyCode,
-                              modifiers: Config.HotKey.toggleModifiers,
-                              id: 1) { [weak self] in
-            self?.popup.toggle()
+        menu.addItem(switchItem(action: manager.settings.dAction, key: "⌥⌘D", selector: #selector(runDAction)))
+        menu.addItem(switchItem(action: manager.settings.eAction, key: "⌥⌘E", selector: #selector(runEAction)))
+        menu.addItem(NSMenuItem.separator())
+
+        // 每个浮窗：显示 ⇄ 隐藏
+        for pane in manager.enabledPanes {
+            let title = manager.isPaneVisible(pane.id) ? "隐藏「\(pane.name)」" : "显示「\(pane.name)」"
+            menu.addItem(actionItem(title: title) { [weak self] in
+                self?.manager.showPane(id: pane.id)
+            })
         }
-        GlobalHotKey.register(keyCode: Config.HotKey.doubaoKeyCode,
-                              modifiers: Config.HotKey.switchModifiers,
-                              id: 2) { [weak self] in
-            self?.popup.switchToSite(name: Config.defaultSiteName, url: Config.doubaoURL)
+        menu.addItem(NSMenuItem.separator())
+
+        menu.addItem(actionItem(title: "显示全部浮窗") { [weak self] in
+            self?.manager.showAll()
+        })
+        menu.addItem(actionItem(title: "隐藏全部浮窗") { [weak self] in
+            self?.manager.hideAll()
+        })
+        menu.addItem(NSMenuItem.separator())
+
+        menu.addItem(actionItem(title: "设置…", shortcut: ",") { [weak self] in
+            self?.openSettings()
+        })
+        menu.addItem(NSMenuItem.separator())
+
+        let quit = NSMenuItem(title: "退出 \(Config.appName)", action: #selector(quitClicked), keyEquivalent: "q")
+        quit.target = self
+        menu.addItem(quit)
+    }
+
+    /// D/E 切换动作的菜单项（标题+提示随当前配置变化）
+    private func switchItem(action: GlobalSwitchAction, key: String, selector: Selector) -> NSMenuItem {
+        let title: String
+        var tip = "\(key): "
+        switch action {
+        case .next:
+            title = "下一个浮窗（\(key)）"
+            tip += "依次切到下一个浮窗"
+        case .previous:
+            title = "上一个浮窗（\(key)）"
+            tip += "依次切到上一个浮窗"
+        case .specific(let id):
+            let name = manager.settings.panes.first { $0.id == id }?.name ?? "浮窗"
+            title = "切到「\(name)」（\(key)）"
+            tip += "直接切到「\(name)」"
+        case .none:
+            title = "无动作（\(key)）"
+            tip += "未绑定动作"
         }
-        GlobalHotKey.register(keyCode: Config.HotKey.deepseekKeyCode,
-                              modifiers: Config.HotKey.switchModifiers,
-                              id: 3) { [weak self] in
-            self?.popup.switchToSite(name: "DeepSeek", url: Config.deepseekURL)
+        let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
+        item.target = self
+        item.toolTip = tip
+        return item
+    }
+
+    private func actionItem(title: String, shortcut: String = "", _ handler: @escaping () -> Void) -> NSMenuItem {
+        let target = ClosureActionTarget(handler: handler)
+        let item = NSMenuItem(title: title, action: #selector(ClosureActionTarget.run), keyEquivalent: shortcut)
+        item.target = target
+        return item
+    }
+
+    // MARK: - 菜单动作
+
+    @objc private func runDAction() { manager.perform(manager.settings.dAction) }
+    @objc private func runEAction() { manager.perform(manager.settings.eAction) }
+    @objc private func quitClicked() {
+        manager.saveAllFrames()
+        NSApp.terminate(nil)
+    }
+
+    private func openSettings() {
+        if settingsController == nil {
+            settingsController = SettingsWindowController(manager: manager)
         }
-        NSLog("全局热键已注册（⌥Space / ⌥⌘D / ⌥⌘E）")
+        settingsController?.show()
     }
 
     // MARK: - 辅助功能权限
@@ -84,13 +131,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showAccessibilityAlert() {
         let alert = NSAlert()
         alert.messageText = "需要「辅助功能」权限"
-        alert.informativeText = "全局快捷键（⌥Space 等）需要「辅助功能」权限才能在你使用其他 App 时生效。\n\n请在系统设置中勾选 \(Config.appName)，勾选后我会自动检测并启用快捷键。\n（在勾选之前，仍可通过状态栏菜单呼出弹窗。）"
+        alert.informativeText = "全局快捷键（⌥Space / ⌥⌘D / ⌥⌘E 等）需要「辅助功能」权限，才能在你使用其它 App 时生效。\n\n请在 系统设置 → 隐私与安全性 → 辅助功能 里勾选 \(Config.appName)，勾选后我会自动启用快捷键。\n（未勾选前，仍可用状态栏菜单呼出浮窗、打开设置。）"
         alert.addButton(withTitle: "打开系统设置")
         alert.addButton(withTitle: "知道了")
 
         NSApp.activate(ignoringOtherApps: true)
         if alert.runModal() == .alertFirstButtonReturn {
-            openAccessibilitySettings()
+            if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+                NSWorkspace.shared.open(url)
+            }
         }
     }
 
@@ -101,32 +150,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if GlobalHotKey.isTrusted() {
                 timer.invalidate()
                 self.trustPollTimer = nil
-                self.registerHotKeys()
-                self.showStatusToast("已获取权限，全局快捷键已启用 ✓")
+                self.manager.applyHotkeys()
+                self.flashStatus()
             }
         }
     }
 
-    private func openAccessibilitySettings() {
-        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
-            NSWorkspace.shared.open(url)
-        }
-    }
-
-    // MARK: - 通知权限
-
-    private func requestNotificationPermissionIfNeeded() {
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
-    }
-
-    // MARK: - 动作
-
-    @objc private func toggleClicked() { popup.toggle() }
-    @objc private func switchToDoubao() { popup.switchToSite(name: Config.defaultSiteName, url: Config.doubaoURL) }
-    @objc private func switchToDeepSeek() { popup.switchToSite(name: "DeepSeek", url: Config.deepseekURL) }
-    @objc private func quitClicked() { NSApp.terminate(nil) }
-
-    private func showStatusToast(_ text: String) {
+    private func flashStatus() {
         guard let button = statusItem.button else { return }
         let original = button.image
         button.image = nil
@@ -135,6 +165,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             button.title = ""
             button.image = original
         }
-        _ = text
     }
+
+    // MARK: - 通知
+
+    private func requestNotificationPermission() {
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+    }
+}
+
+/// 把纯 Swift 闭包包成 NSMenuItem 的 target
+private final class ClosureActionTarget: NSObject {
+    private let handler: () -> Void
+    init(handler: @escaping () -> Void) {
+        self.handler = handler
+    }
+    @objc func run() { handler() }
 }
