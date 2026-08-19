@@ -1,0 +1,11 @@
+# build 产物不入库
+build/
+
+# macOS
+.DS_Store
+*.xcuserstate
+
+# 编辑器
+.vscode/
+.idea/
+*.swp
