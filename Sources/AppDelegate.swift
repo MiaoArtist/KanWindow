@@ -11,7 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         manager = GroupManager(settings: SettingsStore.load())
 
-        buildMainMenu()          // 编辑菜单 → 让 WebView 文本框能 ⌘C/⌘V/⌘X/⌘A
+        buildMainMenu()          // App 菜单(⌘, 设置 / ⌘Q) + 编辑菜单(⌘V 粘贴修复)
         setupStatusItem()
         requestNotificationPermission()
 
@@ -23,11 +23,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    // MARK: - 主菜单（粘贴修复：没有 Edit 菜单时 WKWebView 里 ⌘V 无效）
+    // MARK: - 主菜单
+    // ① App 菜单：让 ⌘,（设置）与 ⌘Q（退出）在应用活跃时全局可用
+    // ② 编辑菜单：修复 WebView 文本框无法 ⌘C/⌘V/⌘X/⌘A 的问题
+    // 注意：所有菜单项 target 一律用 self（AppDelegate 强生命周期），
+    //       不用临时闭包对象当 target —— NSMenuItem.target 是弱引用，会被提前释放导致点了没反应。
 
     private func buildMainMenu() {
         let mainMenu = NSMenu()
 
+        // App 菜单（放最前）
+        let appItem = NSMenuItem()
+        mainMenu.addItem(appItem)
+        let appMenu = NSMenu(title: Config.appName)
+        appItem.submenu = appMenu
+
+        let settingsItem = NSMenuItem(title: "设置…", action: #selector(menuOpenSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        appMenu.addItem(settingsItem)
+        appMenu.addItem(NSMenuItem.separator())
+        let appQuit = NSMenuItem(title: "退出 \(Config.appName)", action: #selector(quitClicked), keyEquivalent: "q")
+        appQuit.target = self
+        appMenu.addItem(appQuit)
+
+        // 编辑菜单
         let editItem = NSMenuItem()
         mainMenu.addItem(editItem)
         let editMenu = NSMenu(title: "编辑")
@@ -86,7 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// 现做一份右键菜单
+    /// 现做一份右键菜单（全部项 target = self）
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
 
@@ -96,23 +115,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         for group in manager.enabledGroups {
             let title = manager.isGroupVisible(group.id) ? "隐藏「\(group.name)」" : "打开「\(group.name)」"
-            menu.addItem(actionItem(title: title) { [weak self] in
-                self?.manager.showGroup(id: group.id)
-            })
+            let item = NSMenuItem(title: title, action: #selector(menuOpenGroup(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = group.id
+            menu.addItem(item)
         }
         menu.addItem(NSMenuItem.separator())
 
-        menu.addItem(actionItem(title: "显示全部组") { [weak self] in
-            self?.manager.showAll()
-        })
-        menu.addItem(actionItem(title: "隐藏全部组") { [weak self] in
-            self?.manager.hideAll()
-        })
+        let showAll = NSMenuItem(title: "显示全部组", action: #selector(menuShowAll), keyEquivalent: "")
+        showAll.target = self
+        menu.addItem(showAll)
+        let hideAll = NSMenuItem(title: "隐藏全部组", action: #selector(menuHideAll), keyEquivalent: "")
+        hideAll.target = self
+        menu.addItem(hideAll)
         menu.addItem(NSMenuItem.separator())
 
-        menu.addItem(actionItem(title: "设置…（⌘,）", shortcut: ",") { [weak self] in
-            self?.openSettings()
-        })
+        let settings = NSMenuItem(title: "设置…（⌘,）", action: #selector(menuOpenSettings), keyEquivalent: "")
+        settings.target = self
+        menu.addItem(settings)
         menu.addItem(NSMenuItem.separator())
 
         let quit = NSMenuItem(title: "退出 \(Config.appName)", action: #selector(quitClicked), keyEquivalent: "q")
@@ -137,17 +157,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return item
     }
 
-    private func actionItem(title: String, shortcut: String = "", _ handler: @escaping () -> Void) -> NSMenuItem {
-        let target = ClosureActionTarget(handler: handler)
-        let item = NSMenuItem(title: title, action: #selector(ClosureActionTarget.run), keyEquivalent: shortcut)
-        item.target = target
-        return item
-    }
-
-    // MARK: - 菜单动作
+    // MARK: - 菜单动作（target = self）
 
     @objc private func runDAction() { manager.perform(manager.settings.dAction) }
     @objc private func runEAction() { manager.perform(manager.settings.eAction) }
+    @objc private func menuOpenGroup(_ sender: NSMenuItem) {
+        if let id = sender.representedObject as? UUID {
+            manager.showGroup(id: id)
+        }
+    }
+    @objc private func menuShowAll() { manager.showAll() }
+    @objc private func menuHideAll() { manager.hideAll() }
+    @objc private func menuOpenSettings() { openSettings() }
     @objc private func quitClicked() {
         manager.saveAllFrames()
         NSApp.terminate(nil)
@@ -206,13 +227,4 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func requestNotificationPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
     }
-}
-
-/// 把纯 Swift 闭包包成 NSMenuItem 的 target
-private final class ClosureActionTarget: NSObject {
-    private let handler: () -> Void
-    init(handler: @escaping () -> Void) {
-        self.handler = handler
-    }
-    @objc func run() { handler() }
 }
