@@ -1,15 +1,14 @@
 import AppKit
 
-/// 浮窗编排器：管理所有浮窗窗口、全局热键、闲置计时联动。
-final class PaneManager {
+/// 组编排器：管理所有网址组的悬浮窗、全局热键、组内切站。
+final class GroupManager {
 
     private(set) var settings: AppSettings
-    private var controllers: [UUID: PaneController] = [:]
-    private var order: [UUID] = []                  // 启用的浮窗顺序
-    private(set) weak var activeController: PaneController?
+    private var controllers: [UUID: GroupController] = [:]
+    private var order: [UUID] = []                 // 启用的组顺序
+    private(set) weak var activeController: GroupController?
     private var localMonitor: Any?
 
-    /// 设置被保存/变更后回调（AppDelegate 用来刷新状态栏菜单）
     var onSettingsChanged: (() -> Void)?
 
     init(settings: AppSettings) {
@@ -21,10 +20,9 @@ final class PaneManager {
 
     // MARK: - 公开状态
 
-    /// 启用状态的浮窗（用于状态栏菜单 / 循环）
-    var enabledPanes: [PaneConfig] { settings.panes.filter { $0.enabled } }
+    var enabledGroups: [GroupConfig] { settings.groups.filter { $0.enabled } }
 
-    func isPaneVisible(_ id: UUID) -> Bool {
+    func isGroupVisible(_ id: UUID) -> Bool {
         controllers[id]?.isVisible ?? false
     }
 
@@ -38,7 +36,6 @@ final class PaneManager {
         onSettingsChanged?()
     }
 
-    /// 应用退 出前把还在显示的窗存下来
     func saveAllFrames() {
         for (id, c) in controllers {
             if let w = c.window {
@@ -48,9 +45,9 @@ final class PaneManager {
         SettingsStore.save(settings)
     }
 
-    // MARK: - 显示 / 隐藏 / 循环
+    // MARK: - 显示 / 隐藏 / 切站
 
-    /// ⌥Space：显示 / 隐藏“当前浮窗”（没有则显示第一个）
+    /// ⌥Space：显示 / 隐藏当前组（没有则显示第一个组）
     func toggle() {
         if let act = activeController {
             if act.isVisible {
@@ -63,9 +60,22 @@ final class PaneManager {
         }
     }
 
-    func showPane(id: UUID) {
+    /// 呼出指定组（隐藏其它组）
+    func showGroup(id: UUID) {
         guard let c = controllers[id] else { return }
         showController(c)
+    }
+
+    /// ⌥⌘D / ⌥⌘E：在当前组内切换网址
+    func cycleSite(_ direction: Int) {
+        guard let act = activeController else {
+            // 还没激活组：先呼出第一个组
+            if let firstID = order.first, let c = controllers[firstID] {
+                showController(c)
+            }
+            return
+        }
+        act.switchSite(by: direction)
     }
 
     func hideAll() {
@@ -79,14 +89,13 @@ final class PaneManager {
         for (i, id) in order.enumerated() {
             guard let c = controllers[id] else { continue }
             if c.window == nil {
-                // 首次创建：居中 + 轻微错位，避免完全重叠
                 c.show(rememberedFrame: nil)
                 if let w = c.window {
                     w.setFrameOrigin(NSPoint(x: w.frame.origin.x + CGFloat(i % 5) * 28,
                                              y: w.frame.origin.y - CGFloat(i % 5) * 28))
                 }
             } else {
-                c.show(rememberedFrame: settings.panes.first { $0.id == id }?.frame)
+                c.show(rememberedFrame: settings.groups.first { $0.id == id }?.frame)
             }
         }
         if let firstID = order.first {
@@ -94,35 +103,13 @@ final class PaneManager {
         }
     }
 
-    // MARK: - 内部
-
-    private func showController(_ c: PaneController) {
-        // “同时只显示一个”语义：先收起其它
-        for (_, other) in controllers where other.id != c.id && other.isVisible {
-            other.hide()
-        }
-        let remembered = settings.panes.first { $0.id == c.id }?.frame
-        c.show(rememberedFrame: remembered)
-        activeController = c
-    }
-
-    private func cycle(_ direction: Int) {
-        guard !order.isEmpty else { return }
-        var startIdx = order.count - 1
-        if let act = activeController, let i = order.firstIndex(of: act.id) {
-            startIdx = i
-        }
-        let target = (startIdx + direction + order.count) % order.count
-        if let c = controllers[order[target]] {
-            showController(c)
-        }
-    }
+    // MARK: - 动作分发
 
     func perform(_ action: GlobalSwitchAction) {
         switch action {
-        case .next: cycle(1)
-        case .previous: cycle(-1)
-        case .specific(let id):
+        case .next: cycleSite(1)
+        case .previous: cycleSite(-1)
+        case .specificGroup(let id):
             if let c = controllers[id] {
                 showController(c)
             }
@@ -130,26 +117,41 @@ final class PaneManager {
         }
     }
 
-    // MARK: - 控制器重建（增删/启停/改名/改址）
+    // MARK: - 内部
+
+    private func showController(_ c: GroupController) {
+        for (_, other) in controllers where other.id != c.id && other.isVisible {
+            other.hide()
+        }
+        let remembered = settings.groups.first { $0.id == c.id }?.frame
+        c.show(rememberedFrame: remembered)
+        activeController = c
+    }
 
     private func rebuildControllers() {
-        let enabled = settings.panes.filter { $0.enabled }
+        let enabled = settings.groups.filter { $0.enabled }
         let enabledIDs = Set(enabled.map { $0.id })
-        var newControllers: [UUID: PaneController] = [:]
+        var newControllers: [UUID: GroupController] = [:]
 
-        for p in enabled {
-            if let existing = controllers[p.id] {
-                existing.update(p, globalIdle: settings.globalIdleMinutes)
-                newControllers[p.id] = existing
+        for g in enabled {
+            if let existing = controllers[g.id] {
+                existing.update(g, globalIdle: settings.globalIdleMinutes)
+                newControllers[g.id] = existing
             } else {
-                let c = PaneController(config: p, globalIdle: settings.globalIdleMinutes) { [weak self] id, snap in
-                    self?.applyFrame(snap, for: id)
-                }
-                newControllers[p.id] = c
+                let c = GroupController(
+                    config: g,
+                    globalIdle: settings.globalIdleMinutes,
+                    onFrameChanged: { [weak self] id, snap in
+                        self?.applyFrame(snap, for: id)
+                    },
+                    onActiveSiteChanged: { [weak self] id, index in
+                        self?.applyActiveSiteIndex(index, for: id)
+                    }
+                )
+                newControllers[g.id] = c
             }
         }
 
-        // 被禁用 / 被删除的浮窗：释放
         for (id, c) in controllers where !enabledIDs.contains(id) {
             c.dispose()
         }
@@ -162,11 +164,18 @@ final class PaneManager {
     }
 
     private func applyFrame(_ snap: FrameSnapshot, for id: UUID, save: Bool = true) {
-        if let idx = settings.panes.firstIndex(where: { $0.id == id }) {
-            settings.panes[idx].frame = snap
+        if let idx = settings.groups.firstIndex(where: { $0.id == id }) {
+            settings.groups[idx].frame = snap
             if save {
                 SettingsStore.save(settings)
             }
+        }
+    }
+
+    private func applyActiveSiteIndex(_ index: Int, for id: UUID) {
+        if let idx = settings.groups.firstIndex(where: { $0.id == id }) {
+            settings.groups[idx].activeSiteIndex = index
+            SettingsStore.save(settings)
         }
     }
 
@@ -175,14 +184,13 @@ final class PaneManager {
     func applyHotkeys() {
         var specs: [GlobalHotKey.Spec] = []
 
-        // ⌥Space = 切换当前浮窗
         specs.append(GlobalHotKey.Spec(id: 1,
                                        keyCode: Config.HotKey.toggleKeyCode,
                                        modifiers: Config.HotKey.toggleModifiers) { [weak self] in
             self?.toggle()
         })
 
-        // ⌥⌘D / ⌥⌘E = 设置里的动作
+        // ⌥⌘D / ⌥⌘E = 当前组内上/下切网址（或按设置做“切到指定组/无”）
         specs.append(GlobalHotKey.Spec(id: 2,
                                        keyCode: Config.HotKey.switchKeyCodeD,
                                        modifiers: Config.HotKey.switchModifiers) { [weak self] in
@@ -194,21 +202,21 @@ final class PaneManager {
             self?.perform(self?.settings.eAction ?? .none)
         })
 
-        // 每个启用浮窗的自定义快捷键（默认无）
-        for (i, p) in settings.panes.enumerated() {
-            guard p.enabled, let h = p.hotKey else { continue }
-            let paneID = p.id
+        // 每个启用组的专属呼出快捷键
+        for (i, g) in settings.groups.enumerated() {
+            guard g.enabled, let h = g.hotKey else { continue }
+            let groupID = g.id
             specs.append(GlobalHotKey.Spec(id: UInt32(1000 + i),
                                            keyCode: h.keyCode,
                                            modifiers: h.modifiers) { [weak self] in
-                self?.showPane(id: paneID)
+                self?.showGroup(id: groupID)
             })
         }
 
         GlobalHotKey.apply(specs)
     }
 
-    // MARK: - 窗口内交互 → 重置各自闲置计时
+    // MARK: - 窗口内交互 → 重置组闲置计时
 
     private func installLocalMonitor() {
         localMonitor = NSEvent.addLocalMonitorForEvents(

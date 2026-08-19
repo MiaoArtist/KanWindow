@@ -2,49 +2,44 @@ import AppKit
 import WebKit
 import UserNotifications
 
-/// 单个悬浮窗：独立窗口 + WebView + 独立闲置计时 + 位置/尺寸记忆。
-/// 窗口懒创建（第一次 show 时才建），停用/删除时释放。
-final class PaneController: NSObject, NSWindowDelegate, WKNavigationDelegate {
+/// 网址组的悬浮窗：一个组 = 一个窗口，组内多个网址在这个窗口里切换。
+/// 窗口懒创建（第一次 show 才建），停用/删除时释放。
+final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate {
 
     let id: UUID
-    private var config: PaneConfig
+    private var config: GroupConfig
     private var globalIdle: Int
 
-    /// 懒创建的窗口与 WebView
     private(set) var window: NSWindow?
     private var webView: WKWebView?
     private var loadedURL: String?
-
     private var idleTimer: Timer?
 
-    /// 窗口位置/尺寸变动 → 交给 Manager 存进设置
     private let onFrameChanged: (UUID, FrameSnapshot) -> Void
-    /// 窗口第一次创建时的初始位置（中心）缓存，避免每次 show 重置
-    private var hasInitialFrame = false
+    private let onActiveSiteChanged: (UUID, Int) -> Void
 
     var isVisible: Bool { window?.isVisible ?? false }
 
-    init(config: PaneConfig,
+    init(config: GroupConfig,
          globalIdle: Int,
-         onFrameChanged: @escaping (UUID, FrameSnapshot) -> Void) {
+         onFrameChanged: @escaping (UUID, FrameSnapshot) -> Void,
+         onActiveSiteChanged: @escaping (UUID, Int) -> Void) {
         self.id = config.id
         self.config = config
         self.globalIdle = globalIdle
         self.onFrameChanged = onFrameChanged
+        self.onActiveSiteChanged = onActiveSiteChanged
         super.init()
     }
 
-    /// 设置变化时同步最新配置
-    func update(_ config: PaneConfig, globalIdle: Int) {
-        let urlChanged = self.config.url != config.url
+    // MARK: - 配置同步
+
+    func update(_ config: GroupConfig, globalIdle: Int) {
         self.config = config
         self.globalIdle = globalIdle
-
-        window?.title = config.name
-
-        if urlChanged, let wv = webView, !config.url.isEmpty, let target = URL(string: config.url) {
-            loadedURL = config.url
-            wv.load(URLRequest(url: target))
+        window?.title = titleText()
+        if webView != nil {
+            loadCurrentSiteIfChanged()
         }
         if window?.isVisible == true {
             restartIdle()
@@ -58,6 +53,7 @@ final class PaneController: NSObject, NSWindowDelegate, WKNavigationDelegate {
         guard let w = window else { return }
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
+        loadCurrentSiteIfChanged()
         startIdle()
     }
 
@@ -67,7 +63,6 @@ final class PaneController: NSObject, NSWindowDelegate, WKNavigationDelegate {
         storeFrame()
     }
 
-    /// 停用/删除该浮窗时释放窗口与 WebView 资源
     func dispose() {
         stopIdle()
         storeFrame()
@@ -76,11 +71,36 @@ final class PaneController: NSObject, NSWindowDelegate, WKNavigationDelegate {
         window = nil
     }
 
-    /// 窗口内发生了交互（点击/滚动/输入）
     func noteInteraction() {
         if window?.isVisible == true {
             startIdle()
         }
+    }
+
+    // MARK: - 组内切换网址
+
+    /// 在组内上/下切换（顺/逆序循环）
+    func switchSite(by offset: Int) {
+        guard config.sites.count > 0 else { return }
+        let count = config.sites.count
+        let next = ((config.safeActiveIndex + offset) % count + count) % count
+        config.activeSiteIndex = next
+        onActiveSiteChanged(id, next)
+        window?.title = titleText()
+        loadCurrentSiteIfChanged()
+        restartIdle()
+    }
+
+    /// 直接切到某个网址（供设置或外部调用）；返回是否成功
+    @discardableResult
+    func switchSite(to siteIndex: Int) -> Bool {
+        guard config.sites.indices.contains(siteIndex) else { return false }
+        config.activeSiteIndex = siteIndex
+        onActiveSiteChanged(id, siteIndex)
+        window?.title = titleText()
+        loadCurrentSiteIfChanged()
+        restartIdle()
+        return true
     }
 
     // MARK: - 闲置自动隐藏
@@ -92,15 +112,15 @@ final class PaneController: NSObject, NSWindowDelegate, WKNavigationDelegate {
     private func startIdle() {
         stopIdle()
         let minutes = effectiveIdle()
-        guard minutes > 0 else { return }  // 0/负数 = 不自动隐藏
+        guard minutes > 0 else { return }   // 0/负数 = 不自动隐藏
 
         let name = config.name
-        let hideMins = minutes
+        let mins = minutes
         idleTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(minutes * 60),
                                          repeats: false) { [weak self] _ in
             guard let self = self, self.window?.isVisible == true else { return }
             self.hide()
-            self.postNotification("「\(name)」已自动隐藏（\(hideMins) 分钟未使用）")
+            self.postNotification("「\(name)」已自动隐藏（\(mins) 分钟未使用）")
         }
     }
 
@@ -119,13 +139,14 @@ final class PaneController: NSObject, NSWindowDelegate, WKNavigationDelegate {
         guard window == nil else { return }
 
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: Config.defaultWindowSize.width,
+            contentRect: NSRect(x: 0, y: 0,
+                                width: Config.defaultWindowSize.width,
                                 height: Config.defaultWindowSize.height),
             styleMask: [.titled, .closable, .miniaturizable, .resizable, .utilityWindow],
             backing: .buffered,
             defer: false
         )
-        w.title = config.name
+        w.title = titleText()
         w.isReleasedWhenClosed = false
         w.level = .floating
         w.collectionBehavior = [.canJoinAllSpaces, .transient, .fullScreenAuxiliary]
@@ -141,22 +162,24 @@ final class PaneController: NSObject, NSWindowDelegate, WKNavigationDelegate {
         w.contentView = wv
         self.webView = wv
 
-        // 位置：优先用户记得的；否则居中
         if let f = remembered, Self.isOnAnyScreen(f.rect) {
             w.setFrame(f.rect, display: false)
         } else {
             center(w)
         }
-        hasInitialFrame = true
         self.window = w
-
-        loadCurrentURL()
     }
 
-    private func loadCurrentURL() {
-        guard !config.url.isEmpty, let url = URL(string: config.url) else { return }
-        loadedURL = config.url
+    private func loadCurrentSiteIfChanged() {
+        guard let site = config.activeSite, !site.url.isEmpty, let url = URL(string: site.url) else { return }
+        if loadedURL == site.url { return }
+        loadedURL = site.url
         webView?.load(URLRequest(url: url))
+    }
+
+    private func titleText() -> String {
+        let siteName = config.activeSite?.name
+        return siteName.map { "\(config.name) · \($0)" } ?? config.name
     }
 
     private func center(_ w: NSWindow) {
@@ -179,31 +202,19 @@ final class PaneController: NSObject, NSWindowDelegate, WKNavigationDelegate {
         onFrameChanged(id, FrameSnapshot(from: w.frame))
     }
 
-    private func currentFrame(_ w: NSWindow) -> FrameSnapshot {
-        FrameSnapshot(from: w.frame)
-    }
-
-    // MARK: - 窗口行为
-
-    func windowShouldClose(_ sender: NSWindow) -> Bool {
-        hide()
-        return false
-    }
-
     func windowDidMove(_ notification: Notification) {
         guard let w = window, w.isVisible else { return }
-        onFrameChanged(id, currentFrame(w))
+        onFrameChanged(id, FrameSnapshot(from: w.frame))
     }
 
     func windowDidResize(_ notification: Notification) {
         guard let w = window, w.isVisible else { return }
-        onFrameChanged(id, currentFrame(w))
+        onFrameChanged(id, FrameSnapshot(from: w.frame))
     }
 
-    // MARK: - 标题
-
-    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        // 标题保留浮窗名（多开时一眼认出是谁）
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        hide()
+        return false
     }
 
     // MARK: - 通知

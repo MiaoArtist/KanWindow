@@ -1,7 +1,7 @@
 import Foundation
 
 // ============================================================
-// 数据模型：浮窗配置 / 全局设置 / 热键绑定
+// 数据模型（分组版）：网址组 → 组内多个网址
 // ============================================================
 
 /// 一个全局热键绑定（键码 + 修饰键掩码）
@@ -9,12 +9,10 @@ struct HotKeyBinding: Codable, Equatable {
     let keyCode: UInt32
     let modifiers: UInt32
 
-    /// 可读显示，如 "⌥⌘D"
     var display: String {
         Self.modSymbols(for: modifiers) + Self.keyName(for: keyCode)
     }
 
-    /// 修饰键掩码（与 GlobalHotKey.Mods 一致）：⌃⌥⇧⌘
     static func modSymbols(for mods: UInt32) -> String {
         var out = ""
         if mods & GlobalHotKey.Mods.control != 0 { out += "⌃" }
@@ -25,9 +23,8 @@ struct HotKeyBinding: Codable, Equatable {
     }
 
     static func keyName(for code: UInt32) -> String {
-        // 常见键
         switch Int(code) {
-        case 0...25: return String(UnicodeScalar(0x41 + code)!)  // A-Z
+        case 0...25: return String(UnicodeScalar(0x41 + code)!)   // A-Z
         case 18...26: return String(UnicodeScalar(0x31 + code - 18)!)  // 1-9
         case 27: return "0"
         case 36: return "↩"
@@ -35,41 +32,25 @@ struct HotKeyBinding: Codable, Equatable {
         case 49: return "Space"
         case 51: return "⌫"
         case 53: return "Esc"
-        case 96: return "F5"
+        case 123: return "←"
+        case 124: return "→"
+        case 125: return "↓"
+        case 126: return "↑"
         default: return "键\(code)"
         }
     }
 }
 
-/// 单个悬浮窗的配置
-struct PaneConfig: Codable, Equatable, Identifiable {
+/// 组内单个网址
+struct SiteConfig: Codable, Equatable, Identifiable {
     var id: UUID
     var name: String
     var url: String
-    var hotKey: HotKeyBinding?     // 该浮窗专属的全局快捷键（默认无）
-    var enabled: Bool              // 启用/停用（停用不建窗口不吃内存）
-    var idleMinutes: Int?          // 每浮窗独立自动隐藏分钟数（nil=跟随全局）
-    var frame: FrameSnapshot?      // 记住上次的位置与尺寸
 
-    init(id: UUID = UUID(),
-         name: String,
-         url: String,
-         hotKey: HotKeyBinding? = nil,
-         enabled: Bool = true,
-         idleMinutes: Int? = nil,
-         frame: FrameSnapshot? = nil) {
+    init(id: UUID = UUID(), name: String, url: String) {
         self.id = id
         self.name = name
         self.url = url
-        self.hotKey = hotKey
-        self.enabled = enabled
-        self.idleMinutes = idleMinutes
-        self.frame = frame
-    }
-
-    /// 有效自动隐藏分钟数（nil→跟随全局；0 或负数→不自动隐藏）
-    func effectiveIdle(global: Int) -> Int {
-        idleMinutes ?? global
     }
 }
 
@@ -105,11 +86,54 @@ struct FrameSnapshot: Codable, Equatable {
     }
 }
 
+/// 网址组：一个组 = 一个悬浮窗；组内多个网址用 ⌥⌘D/E 切换
+struct GroupConfig: Codable, Equatable, Identifiable {
+    var id: UUID
+    var name: String
+    var sites: [SiteConfig]
+    var hotKey: HotKeyBinding?   // 呼出/切到此组的全局快捷键（默认无）
+    var enabled: Bool            // 停用则不建窗口不吃内存
+    var idleMinutes: Int?        // 组独立自动隐藏（nil=跟随全局）
+    var frame: FrameSnapshot?    // 记住位置与尺寸
+    var activeSiteIndex: Int     // 上次打开到组内第几个网址
+
+    init(id: UUID = UUID(),
+         name: String,
+         sites: [SiteConfig],
+         hotKey: HotKeyBinding? = nil,
+         enabled: Bool = true,
+         idleMinutes: Int? = nil,
+         frame: FrameSnapshot? = nil,
+         activeSiteIndex: Int = 0) {
+        self.id = id
+        self.name = name
+        self.sites = sites
+        self.hotKey = hotKey
+        self.enabled = enabled
+        self.idleMinutes = idleMinutes
+        self.frame = frame
+        self.activeSiteIndex = activeSiteIndex
+    }
+
+    func effectiveIdle(global: Int) -> Int {
+        idleMinutes ?? global
+    }
+
+    /// 当前应展示的组内网址（越界安全）
+    var safeActiveIndex: Int {
+        sites.isEmpty ? 0 : min(max(activeSiteIndex, 0), sites.count - 1)
+    }
+
+    var activeSite: SiteConfig? {
+        sites.isEmpty ? nil : sites[safeActiveIndex]
+    }
+}
+
 /// 全局 ⌥⌘D / ⌥⌘E 两个键各自的动作
 enum GlobalSwitchAction: Equatable {
-    case next          // 下一个浮窗
-    case previous      // 上一个浮窗
-    case specific(UUID) // 切到指定浮窗
+    case next                 // 组内下一个网址
+    case previous             // 组内上一个网址
+    case specificGroup(UUID)  // 切到指定组
     case none
 }
 
@@ -125,7 +149,7 @@ extension GlobalSwitchAction: Codable {
         case .none: self = .none
         case .specific:
             if let id = try? c.decode(UUID.self, forKey: .id) {
-                self = .specific(id)
+                self = .specificGroup(id)
             } else {
                 self = .none
             }
@@ -138,26 +162,27 @@ extension GlobalSwitchAction: Codable {
         case .next: try c.encode(Kind.next, forKey: .kind)
         case .previous: try c.encode(Kind.previous, forKey: .kind)
         case .none: try c.encode(Kind.none, forKey: .kind)
-        case .specific(let id):
+        case .specificGroup(let id):
             try c.encode(Kind.specific, forKey: .kind)
             try c.encode(id, forKey: .id)
         }
     }
-
 }
 
 /// 全局设置
 struct AppSettings: Codable, Equatable {
-    var panes: [PaneConfig]
+    var groups: [GroupConfig]
     var globalIdleMinutes: Int
     var dAction: GlobalSwitchAction
     var eAction: GlobalSwitchAction
 
     static func defaults() -> AppSettings {
         AppSettings(
-            panes: [
-                PaneConfig(name: "豆包", url: "https://www.doubao.com/"),
-                PaneConfig(name: "DeepSeek", url: "https://chat.deepseek.com/"),
+            groups: [
+                GroupConfig(name: "AI 助手", sites: [
+                    SiteConfig(name: "豆包", url: "https://www.doubao.com/"),
+                    SiteConfig(name: "DeepSeek", url: "https://chat.deepseek.com/"),
+                ]),
             ],
             globalIdleMinutes: 15,
             dAction: .next,

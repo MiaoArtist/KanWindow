@@ -1,28 +1,34 @@
 import Foundation
 
-/// 配置的持久化：存 UserDefaults（JSON），支持导出/导入 JSON 文件
+/// 配置持久化：存 UserDefaults（JSON），支持导出/导入 JSON 文件
 final class SettingsStore {
 
     static let storageKey = "AppSettings"
 
-    /// 读取配置；首次运行生成默认配置（并吸收旧版 single-window 的 URL 设置）
+    /// 读取配置；首次运行生成默认；自动迁移 v0.2 的「浮窗(panes)」结构 → 分组(groups)
     static func load() -> AppSettings {
         let defaults = UserDefaults.standard
+
+        // 1) 新版结构
         if let data = defaults.data(forKey: storageKey),
            let settings = try? JSONDecoder().decode(AppSettings.self, from: data),
-           !settings.panes.isEmpty {
+           !settings.groups.isEmpty {
             return settings
         }
 
-        // 首次运行：迁移旧版（单一窗口版）手动配置过的 URL
+        // 2) 旧版（v0.2 单组多浮窗）结构 → 迁移
+        if let data = defaults.data(forKey: storageKey),
+           let legacy = try? JSONDecoder().decode(LegacyAppSettings.self, from: data),
+           !legacy.panes.isEmpty {
+            let migrated = legacy.migrated()
+            save(migrated)
+            return migrated
+        }
+
+        // 3) 全新安装（并吸收更早 single-window 版改过的 URL）
         var fresh = AppSettings.defaults()
-        if !fresh.panes.isEmpty {
-            if fresh.panes.count > 0, let url = defaults.string(forKey: "DoubaoURL") {
-                fresh.panes[0].url = url
-            }
-            if fresh.panes.count > 1, let url = defaults.string(forKey: "DeepseekURL") {
-                fresh.panes[1].url = url
-            }
+        if let url = defaults.string(forKey: "DoubaoURL"), fresh.groups.first?.sites.count ?? 0 > 0 {
+            fresh.groups[0].sites[0].url = url
         }
         save(fresh)
         return fresh
@@ -33,7 +39,7 @@ final class SettingsStore {
         UserDefaults.standard.set(data, forKey: storageKey)
     }
 
-    // MARK: - 导入/导出
+    // MARK: - 导入 / 导出
 
     static func export(_ settings: AppSettings, to url: URL) throws {
         let encoder = JSONEncoder()
@@ -45,16 +51,54 @@ final class SettingsStore {
     static func importData(from url: URL) throws -> AppSettings {
         let data = try Data(contentsOf: url)
         let settings = try JSONDecoder().decode(AppSettings.self, from: data)
-        guard !settings.panes.isEmpty else {
-            throw SettingsStoreError.emptyPanes
+        guard !settings.groups.isEmpty else {
+            throw SettingsStoreError.emptyGroups
         }
         return settings
     }
 
     enum SettingsStoreError: LocalizedError {
-        case emptyPanes
+        case emptyGroups
         var errorDescription: String? {
-            "导入的配置里没有浮窗（panes 为空），已取消导入。"
+            "导入的配置里没有网址组（groups 为空），已取消导入。"
         }
+    }
+}
+
+// MARK: - v0.2 旧结构迁移
+
+/// v0.2 的「浮窗」结构（每个浮窗 = 一个组内网址）
+private struct LegacyAppSettings: Codable {
+    struct LegacyPane: Codable {
+        var id: UUID
+        var name: String
+        var url: String
+        var hotKey: HotKeyBinding?
+        var enabled: Bool
+        var idleMinutes: Int?
+        var frame: FrameSnapshot?
+    }
+    var panes: [LegacyPane]
+    var globalIdleMinutes: Int
+    var dAction: GlobalSwitchAction
+    var eAction: GlobalSwitchAction
+
+    func migrated() -> AppSettings {
+        let groups = panes.map { pane in
+            GroupConfig(
+                id: pane.id,
+                name: pane.name,
+                sites: [SiteConfig(name: pane.name, url: pane.url)],
+                hotKey: pane.hotKey,
+                enabled: pane.enabled,
+                idleMinutes: pane.idleMinutes,
+                frame: pane.frame,
+                activeSiteIndex: 0
+            )
+        }
+        return AppSettings(groups: groups,
+                           globalIdleMinutes: globalIdleMinutes,
+                           dAction: dAction,
+                           eAction: eAction)
     }
 }
