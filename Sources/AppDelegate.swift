@@ -96,9 +96,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             || (event?.type == .leftMouseUp && event?.modifierFlags.contains(.control) == true)
 
         if isRightClick {
-            // 每次现做一份新菜单再弹出（绝不在跟踪过程中改菜单）
-            if let item = statusItem {
-                item.popUpMenu(buildMenu())
+            // 每次现做一份新菜单，定位在图标处弹出（绝不在跟踪过程中改菜单）
+            if let button = statusItem?.button, let w = button.window {
+                let rect = w.convertToScreen(button.convert(button.bounds, to: nil))
+                let menu = buildMenu()
+                menu.popUp(positioning: nil, at: NSPoint(x: rect.minX, y: rect.minY), in: nil)
             }
         } else {
             manager.toggle()
@@ -109,13 +111,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func buildMenu() -> NSMenu {
         let menu = NSMenu()
 
-        menu.addItem(switchItem(action: manager.settings.dAction, key: "⌥⌘D", selector: #selector(runDAction)))
-        menu.addItem(switchItem(action: manager.settings.eAction, key: "⌥⌘E", selector: #selector(runEAction)))
+        // 找到 ⌥⌘D / ⌥⌘E 绑定的功能显示在顶部（跟随用户改的快捷键表）
+        if let d = hotkeyItem(keyCode: Config.HotKey.switchKeyCodeD, keyDisplay: "⌥⌘D") {
+            menu.addItem(d)
+        }
+        if let e = hotkeyItem(keyCode: Config.HotKey.switchKeyCodeE, keyDisplay: "⌥⌘E") {
+            menu.addItem(e)
+        }
         menu.addItem(NSMenuItem.separator())
 
         for group in manager.enabledGroups {
-            let title = manager.isGroupVisible(group.id) ? "隐藏「\(group.name)」" : "打开「\(group.name)」"
-            let item = NSMenuItem(title: title, action: #selector(menuOpenGroup(_:)), keyEquivalent: "")
+            // 切换至某组：切过去后，⌥Space / 左键点的就是这一组
+            let item = NSMenuItem(title: "切换至「\(group.name)」", action: #selector(menuOpenGroup(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = group.id
             menu.addItem(item)
@@ -141,26 +148,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return menu
     }
 
-    /// D/E 动作菜单项（标题随配置变化）
-    private func switchItem(action: GlobalSwitchAction, key: String, selector: Selector) -> NSMenuItem {
-        let title: String
-        switch action {
-        case .next: title = "组内下一个网址（\(key)）"
-        case .previous: title = "组内上一个网址（\(key)）"
+    /// 根据快捷键表，生成绑定在指定键上的功能菜单项
+    private func hotkeyItem(keyCode: UInt32, keyDisplay: String) -> NSMenuItem? {
+        guard let cfg = manager.settings.hotkeys.first(where: {
+            $0.binding?.keyCode == keyCode && $0.binding?.modifiers == Config.HotKey.switchModifiers
+        }) else { return nil }
+        let title = "\(functionTitle(cfg.function))（\(keyDisplay)）"
+        let item = NSMenuItem(title: title, action: #selector(runFunctionTag(_:)), keyEquivalent: "")
+        item.target = self
+        item.representedObject = cfg.function.tag
+        return item
+    }
+
+    private func functionTitle(_ function: HotkeyFunction) -> String {
+        switch function {
         case .specificGroup(let id):
             let name = manager.settings.groups.first { $0.id == id }?.name ?? "组"
-            title = "切到「\(name)」（\(key)）"
-        case .none: title = "无动作（\(key)）"
+            return "切换至「\(name)」"
+        default:
+            return function.display
         }
-        let item = NSMenuItem(title: title, action: selector, keyEquivalent: "")
-        item.target = self
-        return item
     }
 
     // MARK: - 菜单动作（target = self）
 
-    @objc private func runDAction() { manager.perform(manager.settings.dAction) }
-    @objc private func runEAction() { manager.perform(manager.settings.eAction) }
+    @objc private func runFunctionTag(_ sender: NSMenuItem) {
+        guard let tag = sender.representedObject as? String,
+              let function = HotkeyFunction.fromTag(tag) else { return }
+        manager.perform(function)
+    }
     @objc private func menuOpenGroup(_ sender: NSMenuItem) {
         if let id = sender.representedObject as? UUID {
             manager.showGroup(id: id)

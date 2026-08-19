@@ -103,7 +103,9 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate {
         return true
     }
 
-    // MARK: - 闲置自动隐藏
+    // MARK: - 闲置自动关闭
+    // 语义说明：浮窗闲置满 N 分钟，不是简单“隐藏”，而是【彻底关闭并释放网页内存】；
+    // 需要时再用快捷键呼出，会回到原位置、原网站（重新加载）。
 
     private func effectiveIdle() -> Int {
         config.effectiveIdle(global: globalIdle)
@@ -112,16 +114,23 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate {
     private func startIdle() {
         stopIdle()
         let minutes = effectiveIdle()
-        guard minutes > 0 else { return }   // 0/负数 = 不自动隐藏
+        guard minutes > 0 else { return }   // 0/负数 = 不自动关闭
 
         let name = config.name
         let mins = minutes
         idleTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(minutes * 60),
                                          repeats: false) { [weak self] _ in
             guard let self = self, self.window?.isVisible == true else { return }
-            self.hide()
-            self.postNotification("「\(name)」已自动隐藏（\(mins) 分钟未使用）")
+            self.dispose()
+            self.postNotification("「\(name)」已自动关闭（\(mins) 分钟未使用），已释放内存")
         }
+    }
+
+    /// 刷新当前浮窗页面（重载当前网址）
+    func reloadCurrentSite() {
+        guard window != nil, let wv = webView else { return }
+        wv.reload()
+        restartIdle()
     }
 
     private func restartIdle() {

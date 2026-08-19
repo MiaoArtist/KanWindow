@@ -1,42 +1,52 @@
 import AppKit
 import UniformTypeIdentifiers
 
-/// 设置面板（分组版）：网址组管理、组内站点管理、全局 D/E 动作、导入导出。
+/// 设置面板（v0.4）：网址组 / 组内网址 / 全局快捷键 三块 + 底部自动关闭与按钮。
 final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate {
 
     let window: NSWindow
     private let manager: GroupManager
     private var draft: AppSettings
 
-    // 组表格 / 站点表格（用 tag 区分）
+    // 表格
     private let groupsTable = NSTableView()
     private let sitesTable = NSTableView()
+    private let hotkeysTable = NSTableView()
 
     // 组编辑器
     private let groupNameField = NSTextField()
     private let groupIdleField = NSTextField()
     private let groupEnableCheckbox = NSButton(checkboxWithTitle: "启用此组", target: nil, action: nil)
-    private let groupHotkeyButton = NSButton(title: "", target: nil, action: nil)
-    private let groupHotkeyClear = NSButton(title: "清除", target: nil, action: nil)
 
     // 站点编辑器
     private let siteNameField = NSTextField()
     private let siteUrlField = NSTextField()
 
-    // 全局
-    private let globalIdleField = NSTextField()
-    private let dActionPopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let eActionPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    // 快捷键编辑器
+    private let hotkeyFunctionPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let hotkeyRecordButton = NSButton(title: "未设置", target: nil, action: nil)
+    private let hotkeyClearButton = NSButton(title: "清除", target: nil, action: nil)
 
-    private var dActions: [GlobalSwitchAction] = []
-    private var eActions: [GlobalSwitchAction] = []
+    // 底部
+    private let globalIdleField = NSTextField()
+
+    // 站点区灰化所需引用
+    private var sitesTitleLabel: NSTextField!
+    private var sitesScroll: NSScrollView!
+    private var addSiteButton: NSButton!
+    private var removeSiteButton: NSButton!
+    private var siteFormViews: [NSView] = []
+
+    // 快捷键功能区选项映射（popup 行号 → 功能）
+    private var functionOptions: [(HotkeyFunction, String)] = []
+
     private var recordingMonitor: Any?
 
     init(manager: GroupManager) {
         self.manager = manager
         self.draft = manager.settings
         self.window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 720, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 800, height: 720),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -47,8 +57,9 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         window.level = .floating
         window.hidesOnDeactivate = false
         window.delegate = self
-        self.groupsTable.tag = 0
-        self.sitesTable.tag = 1
+        groupsTable.tag = 0
+        sitesTable.tag = 1
+        hotkeysTable.tag = 2
         buildUI()
         reloadAll()
     }
@@ -72,7 +83,7 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         root.orientation = .vertical
         root.alignment = .leading
         root.spacing = 10
-        root.edgeInsets = NSEdgeInsets(top: 16, left: 18, bottom: 16, right: 18)
+        root.edgeInsets = NSEdgeInsets(top: 14, left: 26, bottom: 14, right: 26)
         root.translatesAutoresizingMaskIntoConstraints = false
         content.addSubview(root)
         NSLayoutConstraint.activate([
@@ -81,29 +92,27 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
             root.topAnchor.constraint(equalTo: content.topAnchor),
             root.bottomAnchor.constraint(equalTo: content.bottomAnchor),
         ])
-        let contentWidth: CGFloat = 720 - 18 * 2   // 684
 
+        // ===== ① 网址组 =====
         root.addArrangedSubview(sectionTitle("网址组"))
-
-        // —— 组：左列表 + 右编辑 ——
         let groupsRow = NSStackView()
         groupsRow.orientation = .horizontal
+        groupsRow.spacing = 16
         groupsRow.alignment = .top
-        groupsRow.spacing = 14
         root.addArrangedSubview(groupsRow)
 
-        let groupsScroll = makeScrollTable(groupsTable, columns: makeCheckColumn("开") + [makeColumn("组名", 200)])
-        groupsScroll.widthAnchor.constraint(equalToConstant: 250).isActive = true
-        groupsScroll.heightAnchor.constraint(equalToConstant: 150).isActive = true
+        let groupsScroll = makeScrollTable(groupsTable, columns: [checkColumn("启用"), textColumn("组名", 300)])
+        groupsScroll.widthAnchor.constraint(equalToConstant: 420).isActive = true
+        groupsScroll.heightAnchor.constraint(equalToConstant: 132).isActive = true
         groupsRow.addArrangedSubview(groupsScroll)
 
-        groupNameField.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        groupNameField.widthAnchor.constraint(equalToConstant: 220).isActive = true
         groupNameField.font = .systemFont(ofSize: 12)
         groupNameField.target = self
         groupNameField.action = #selector(groupEditorChanged(_:))
         groupNameField.placeholderString = "组名，如：AI 助手"
 
-        groupIdleField.widthAnchor.constraint(equalToConstant: 80).isActive = true
+        groupIdleField.widthAnchor.constraint(equalToConstant: 60).isActive = true
         groupIdleField.font = .systemFont(ofSize: 12)
         groupIdleField.target = self
         groupIdleField.action = #selector(groupEditorChanged(_:))
@@ -112,60 +121,46 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         groupEnableCheckbox.target = self
         groupEnableCheckbox.action = #selector(groupEditorChanged(_:))
 
-        groupHotkeyButton.title = "未设置"
-        groupHotkeyButton.bezelStyle = .rounded
-        groupHotkeyButton.widthAnchor.constraint(equalToConstant: 170).isActive = true
-        groupHotkeyButton.target = self
-        groupHotkeyButton.action = #selector(recordGroupHotkey)
-
-        groupHotkeyClear.bezelStyle = .rounded
-        groupHotkeyClear.widthAnchor.constraint(equalToConstant: 62).isActive = true
-        groupHotkeyClear.target = self
-        groupHotkeyClear.action = #selector(clearGroupHotkey)
-
         let groupForm = NSGridView(views: [
             [formLabel("组名称"), groupNameField],
-            [formLabel("自动隐藏(分钟)"), groupIdleField, formNote("留空=全局；0=不隐藏")],
             [groupEnableCheckbox],
-            [formLabel("呼出快捷键"), groupHotkeyButton, groupHotkeyClear],
+            [formLabel("自动关闭(分)"), groupIdleField, formNote("留空=全局")],
         ])
-        groupForm.rowSpacing = 8
-        groupForm.columnSpacing = 12
-        groupForm.column(at: 0).width = 130
+        groupForm.rowSpacing = 7
+        groupForm.columnSpacing = 10
+        groupForm.column(at: 0).width = 92
         groupsRow.addArrangedSubview(groupForm)
 
-        // —— 组：增删按钮 ——
         let groupButtons = NSStackView()
         groupButtons.orientation = .horizontal
         groupButtons.spacing = 8
         root.addArrangedSubview(groupButtons)
         groupButtons.addArrangedSubview(smallButton("＋", action: #selector(addGroup)))
         groupButtons.addArrangedSubview(smallButton("－", action: #selector(removeGroup)))
-        groupButtons.addArrangedSubview(formNote("组名在列表里勾选可启用/停用"))
+        groupButtons.addArrangedSubview(formNote("列表里勾选可启用/停用（停用不建窗口、不吃内存）"))
 
-        root.addArrangedSubview(separator())
-
-        // —— 站点 ——
-        root.addArrangedSubview(sectionTitle("组内网址（⌥⌘D / ⌥⌘E 在组内切换）"))
+        // ===== ② 组内网址（未选中组时整体置灰） =====
+        sitesTitleLabel = sectionTitle("组内网址")
+        root.addArrangedSubview(sitesTitleLabel)
 
         let sitesRow = NSStackView()
         sitesRow.orientation = .horizontal
+        sitesRow.spacing = 16
         sitesRow.alignment = .top
-        sitesRow.spacing = 14
         root.addArrangedSubview(sitesRow)
 
-        let sitesScroll = makeScrollTable(sitesTable, columns: [makeColumn("名称", 100), makeColumn("网址", 130)])
-        sitesScroll.widthAnchor.constraint(equalToConstant: 250).isActive = true
-        sitesScroll.heightAnchor.constraint(equalToConstant: 140).isActive = true
+        sitesScroll = makeScrollTable(sitesTable, columns: [textColumn("名称", 150), textColumn("网址", 240)])
+        sitesScroll.widthAnchor.constraint(equalToConstant: 420).isActive = true
+        sitesScroll.heightAnchor.constraint(equalToConstant: 132).isActive = true
         sitesRow.addArrangedSubview(sitesScroll)
 
-        siteNameField.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        siteNameField.widthAnchor.constraint(equalToConstant: 220).isActive = true
         siteNameField.font = .systemFont(ofSize: 12)
         siteNameField.target = self
         siteNameField.action = #selector(siteEditorChanged(_:))
         siteNameField.placeholderString = "如：豆包"
 
-        siteUrlField.widthAnchor.constraint(equalToConstant: 260).isActive = true
+        siteUrlField.widthAnchor.constraint(equalToConstant: 220).isActive = true
         siteUrlField.font = .systemFont(ofSize: 12)
         siteUrlField.target = self
         siteUrlField.action = #selector(siteEditorChanged(_:))
@@ -175,66 +170,105 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
             [formLabel("站点名称"), siteNameField],
             [formLabel("网址"), siteUrlField],
         ])
-        siteForm.rowSpacing = 8
-        siteForm.columnSpacing = 12
-        siteForm.column(at: 0).width = 130
+        siteForm.rowSpacing = 7
+        siteForm.columnSpacing = 10
+        siteForm.column(at: 0).width = 72
         sitesRow.addArrangedSubview(siteForm)
+        siteFormViews = [siteNameField, siteUrlField, siteForm]
 
+        addSiteButton = smallButton("＋", action: #selector(addSite))
+        removeSiteButton = smallButton("－", action: #selector(removeSite))
         let siteButtons = NSStackView()
         siteButtons.orientation = .horizontal
         siteButtons.spacing = 8
         root.addArrangedSubview(siteButtons)
-        siteButtons.addArrangedSubview(smallButton("＋", action: #selector(addSite)))
-        siteButtons.addArrangedSubview(smallButton("－", action: #selector(removeSite)))
+        siteButtons.addArrangedSubview(addSiteButton)
+        siteButtons.addArrangedSubview(removeSiteButton)
+        siteButtons.addArrangedSubview(formNote("组内用「组内下一个/上一个网址」快捷键切换 ⌥⌘D/E"))
 
+        // ===== ③ 全局快捷键 =====
+        root.addArrangedSubview(sectionTitle("全局快捷键"))
+
+        let hotkeysRow = NSStackView()
+        hotkeysRow.orientation = .horizontal
+        hotkeysRow.spacing = 16
+        hotkeysRow.alignment = .top
+        root.addArrangedSubview(hotkeysRow)
+
+        let hotkeysScroll = makeScrollTable(hotkeysTable, columns: [textColumn("功能", 240), textColumn("按键", 150)])
+        hotkeysScroll.widthAnchor.constraint(equalToConstant: 420).isActive = true
+        hotkeysScroll.heightAnchor.constraint(equalToConstant: 132).isActive = true
+        hotkeysRow.addArrangedSubview(hotkeysScroll)
+
+        hotkeyFunctionPopup.widthAnchor.constraint(equalToConstant: 200).isActive = true
+        hotkeyFunctionPopup.target = self
+        hotkeyFunctionPopup.action = #selector(hotkeyFunctionChanged(_:))
+
+        hotkeyRecordButton.bezelStyle = .rounded
+        hotkeyRecordButton.widthAnchor.constraint(equalToConstant: 150).isActive = true
+        hotkeyRecordButton.target = self
+        hotkeyRecordButton.action = #selector(recordHotkeyBinding)
+
+        hotkeyClearButton.bezelStyle = .rounded
+        hotkeyClearButton.widthAnchor.constraint(equalToConstant: 60).isActive = true
+        hotkeyClearButton.target = self
+        hotkeyClearButton.action = #selector(clearHotkeyBinding)
+
+        let hotkeyForm = NSGridView(views: [
+            [formLabel("功能"), hotkeyFunctionPopup],
+            [formLabel("按键"), hotkeyRecordButton, hotkeyClearButton],
+        ])
+        hotkeyForm.rowSpacing = 8
+        hotkeyForm.columnSpacing = 10
+        hotkeyForm.column(at: 0).width = 44
+        hotkeysRow.addArrangedSubview(hotkeyForm)
+
+        let hotkeyButtons = NSStackView()
+        hotkeyButtons.orientation = .horizontal
+        hotkeyButtons.spacing = 8
+        root.addArrangedSubview(hotkeyButtons)
+        hotkeyButtons.addArrangedSubview(smallButton("＋", action: #selector(addHotkey)))
+        hotkeyButtons.addArrangedSubview(smallButton("－", action: #selector(removeHotkey)))
+        hotkeyButtons.addArrangedSubview(formNote("点＋添加一条，选中后再选功能/录按键"))
+
+        // ===== 底部：全局自动关闭 + 说明 + 按钮 =====
         root.addArrangedSubview(separator())
 
-        // —— 全局 ——
-        root.addArrangedSubview(sectionTitle("全局"))
+        let autoRow = NSStackView()
+        autoRow.orientation = .horizontal
+        autoRow.spacing = 10
+        autoRow.alignment = .centerY
+        root.addArrangedSubview(autoRow)
 
-        globalIdleField.widthAnchor.constraint(equalToConstant: 80).isActive = true
+        autoRow.addArrangedSubview(formLabel("全局自动关闭(分钟)"))
+        globalIdleField.widthAnchor.constraint(equalToConstant: 60).isActive = true
         globalIdleField.font = .systemFont(ofSize: 12)
         globalIdleField.target = self
-        globalIdleField.action = #selector(globalChanged(_:))
+        globalIdleField.action = #selector(globalIdleChanged(_:))
         globalIdleField.placeholderString = "15"
+        autoRow.addArrangedSubview(globalIdleField)
 
-        dActionPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
-        dActionPopup.target = self
-        dActionPopup.action = #selector(dActionChanged(_:))
-        eActionPopup.widthAnchor.constraint(equalToConstant: 260).isActive = true
-        eActionPopup.target = self
-        eActionPopup.action = #selector(eActionChanged(_:))
+        let explain = NSTextField(wrappingLabelWithString: "「自动关闭」：浮窗闲置满 N 分钟会【彻底关闭】并释放网页内存（不是只隐藏），需要时用快捷键再呼出，会回到原位置、原网站。设 0 表示不自动关闭。")
+        explain.font = .systemFont(ofSize: 11)
+        explain.textColor = .secondaryLabelColor
+        explain.widthAnchor.constraint(equalToConstant: 560).isActive = true
+        autoRow.addArrangedSubview(explain)
 
-        let globalForm = NSGridView(views: [
-            [formLabel("自动隐藏(分钟)"), globalIdleField, formNote("全局默认；组可单独覆盖")],
-            [formLabel("⌥⌘D 动作"), dActionPopup],
-            [formLabel("⌥⌘E 动作"), eActionPopup],
-        ])
-        globalForm.rowSpacing = 8
-        globalForm.columnSpacing = 12
-        globalForm.column(at: 0).width = 130
-        root.addArrangedSubview(globalForm)
-
-        // —— 底部按钮 ——
         let buttonsRow = NSStackView()
         buttonsRow.orientation = .horizontal
-        buttonsRow.alignment = .centerY
         buttonsRow.spacing = 10
-        buttonsRow.widthAnchor.constraint(equalToConstant: contentWidth).isActive = true
+        buttonsRow.alignment = .centerY
+        buttonsRow.widthAnchor.constraint(equalToConstant: 748).isActive = true
         root.addArrangedSubview(buttonsRow)
 
         buttonsRow.addArrangedSubview(standardButton("恢复默认", action: #selector(restoreClicked)))
         buttonsRow.addArrangedSubview(standardButton("导入…", action: #selector(importClicked)))
         buttonsRow.addArrangedSubview(standardButton("导出…", action: #selector(exportClicked)))
-
         let spacer = NSView()
         spacer.setContentHuggingPriority(.defaultLow, for: .horizontal)
         buttonsRow.addArrangedSubview(spacer)
-
         buttonsRow.addArrangedSubview(standardButton("取消", action: #selector(cancelClicked)))
         buttonsRow.addArrangedSubview(standardButton("保存", action: #selector(saveClicked)))
-
-        root.addArrangedSubview(formNote("提示：左键点顶部栏图标 = 呼出/收起弹窗；右键 = 菜单(设置)。在窗口里按 ⌘, 也能打开设置。"))
     }
 
     // MARK: - UI 小工具
@@ -261,7 +295,7 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
     private func separator() -> NSBox {
         let box = NSBox()
         box.boxType = .separator
-        box.widthAnchor.constraint(equalToConstant: 320).isActive = true
+        box.widthAnchor.constraint(equalToConstant: 748).isActive = true
         return box
     }
 
@@ -278,18 +312,18 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         return b
     }
 
-    private func makeColumn(_ title: String, _ width: CGFloat) -> NSTableColumn {
-        let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(title))
+    private func textColumn(_ title: String, _ width: CGFloat) -> NSTableColumn {
+        let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("c-" + title))
         col.title = title
         col.width = width
         return col
     }
 
-    private func makeCheckColumn(_ title: String) -> [NSTableColumn] {
+    private func checkColumn(_ title: String) -> NSTableColumn {
         let col = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("enabled"))
         col.title = title
-        col.width = 34
-        return [col]
+        col.width = 46
+        return col
     }
 
     private func makeScrollTable(_ table: NSTableView, columns: [NSTableColumn]) -> NSScrollView {
@@ -313,38 +347,36 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
     private func reloadAll() {
         groupsTable.reloadData()
         sitesTable.reloadData()
+        hotkeysTable.reloadData()
         globalIdleField.stringValue = String(draft.globalIdleMinutes)
-        rebuildActionPopups()
+        rebuildFunctionPopup()
         if groupsTable.numberOfRows > 0 {
             groupsTable.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
         }
         reloadGroupEditor()
         reloadSiteEditor()
+        reloadHotkeyEditor()
+        updateSitesEnabled()
     }
 
-    private func rebuildActionPopups() {
-        rebuildPopup(dActionPopup, into: &dActions, current: draft.dAction)
-        rebuildPopup(eActionPopup, into: &eActions, current: draft.eAction)
-    }
-
-    private func rebuildPopup(_ popup: NSPopUpButton, into actions: inout [GlobalSwitchAction], current: GlobalSwitchAction) {
-        popup.removeAllItems()
-        var list: [GlobalSwitchAction] = [.next, .previous]
-        popup.addItem(withTitle: "组内下一个网址")
-        popup.addItem(withTitle: "组内上一个网址")
+    /// 快捷键功能区下拉内容（功能列表）
+    private func rebuildFunctionPopup() {
+        hotkeyFunctionPopup.removeAllItems()
+        functionOptions = []
+        func add(_ f: HotkeyFunction, _ title: String) {
+            functionOptions.append((f, title))
+            hotkeyFunctionPopup.addItem(withTitle: title)
+        }
+        add(.toggleCurrent, "显示/隐藏当前组")
+        add(.nextSite, "组内下一个网址")
+        add(.previousSite, "组内上一个网址")
+        add(.nextGroup, "切换下一个组")
+        add(.previousGroup, "切换上一个组")
         for g in draft.groups where g.enabled {
-            list.append(.specificGroup(g.id))
-            popup.addItem(withTitle: "切到「\(g.name)」")
+            add(.specificGroup(g.id), "切换至「\(g.name)」")
         }
-        list.append(.none)
-        popup.addItem(withTitle: "无动作")
-        actions = list
-
-        if let idx = list.firstIndex(where: { $0 == current }) {
-            popup.selectItem(at: idx)
-        } else if let noneIdx = list.firstIndex(where: { $0 == .none }) {
-            popup.selectItem(at: noneIdx)
-        }
+        add(.refresh, "刷新当前浮窗")
+        hotkeyFunctionPopup.selectItem(at: 0)
     }
 
     // MARK: - 选中与编辑器
@@ -357,9 +389,13 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
 
     private func selectedSiteIndex() -> Int? {
         let row = sitesTable.selectedRow
-        guard let gi = selectedGroupIndex(),
-              gi < draft.groups.count,
-              row >= 0, row < draft.groups[gi].sites.count else { return nil }
+        guard let gi = selectedGroupIndex(), row >= 0, row < draft.groups[gi].sites.count else { return nil }
+        return row
+    }
+
+    private func selectedHotkeyIndex() -> Int? {
+        let row = hotkeysTable.selectedRow
+        guard row >= 0, row < draft.hotkeys.count else { return nil }
         return row
     }
 
@@ -368,42 +404,76 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
             groupNameField.stringValue = ""
             groupIdleField.stringValue = ""
             groupEnableCheckbox.state = .off
-            groupHotkeyButton.title = "未设置"
-            groupNameField.isEnabled = false
-            groupIdleField.isEnabled = false
-            groupEnableCheckbox.isEnabled = false
-            groupHotkeyButton.isEnabled = false
-            groupHotkeyClear.isEnabled = false
+            setControl(groupNameField, enabled: false)
+            setControl(groupIdleField, enabled: false)
+            setControl(groupEnableCheckbox, enabled: false)
+            reloadSiteEditor()
             return
         }
         let g = draft.groups[gi]
-        groupNameField.isEnabled = true
-        groupIdleField.isEnabled = true
-        groupEnableCheckbox.isEnabled = true
-        groupHotkeyButton.isEnabled = true
-        groupHotkeyClear.isEnabled = true
+        setControl(groupNameField, enabled: true)
+        setControl(groupIdleField, enabled: true)
+        setControl(groupEnableCheckbox, enabled: true)
         groupNameField.stringValue = g.name
         groupIdleField.stringValue = g.idleMinutes.map(String.init) ?? ""
         groupEnableCheckbox.state = g.enabled ? .on : .off
-        groupHotkeyButton.title = g.hotKey?.display ?? "未设置（点击录制）"
         reloadSiteEditor()
     }
 
     private func reloadSiteEditor() {
-        let gi = selectedGroupIndex()
-        guard let si = selectedSiteIndex() else {
+        guard let si = selectedSiteIndex(), let gi = selectedGroupIndex() else {
             siteNameField.stringValue = ""
             siteUrlField.stringValue = ""
-            siteNameField.isEnabled = gi != nil
-            siteUrlField.isEnabled = gi != nil
+            setControl(siteNameField, enabled: selectedGroupIndex() != nil)
+            setControl(siteUrlField, enabled: selectedGroupIndex() != nil)
+            updateSitesEnabled()
             return
         }
-        guard let gi = gi else { return }
+        setControl(siteNameField, enabled: true)
+        setControl(siteUrlField, enabled: true)
         let s = draft.groups[gi].sites[si]
-        siteNameField.isEnabled = true
-        siteUrlField.isEnabled = true
         siteNameField.stringValue = s.name
         siteUrlField.stringValue = s.url
+        updateSitesEnabled()
+    }
+
+    private func reloadHotkeyEditor() {
+        guard let hi = selectedHotkeyIndex() else {
+            hotkeyFunctionPopup.isEnabled = false
+            hotkeyRecordButton.isEnabled = false
+            hotkeyClearButton.isEnabled = false
+            hotkeyRecordButton.title = "未设置"
+            return
+        }
+        hotkeyFunctionPopup.isEnabled = true
+        hotkeyRecordButton.isEnabled = true
+        hotkeyClearButton.isEnabled = true
+        let cfg = draft.hotkeys[hi]
+        if let idx = functionOptions.firstIndex(where: { $0.0 == cfg.function }) {
+            hotkeyFunctionPopup.selectItem(at: idx)
+        } else {
+            hotkeyFunctionPopup.selectItem(at: 0)
+        }
+        hotkeyRecordButton.title = cfg.binding?.display ?? "未设置（点击录制）"
+    }
+
+    /// 组内网址区整体置灰（未选中组时）
+    private func updateSitesEnabled() {
+        let on = selectedGroupIndex() != nil
+        sitesTable.isEnabled = on
+        sitesScroll.alphaValue = on ? 1.0 : 0.45
+        sitesTitleLabel.textColor = on ? .labelColor : .tertiaryLabelColor
+        addSiteButton.isEnabled = on
+        removeSiteButton.isEnabled = on
+        for v in siteFormViews {
+            setControl(v, enabled: on)
+        }
+    }
+
+    private func setControl(_ v: NSView, enabled: Bool) {
+        if let ctrl = v as? NSControl {
+            ctrl.isEnabled = enabled
+        }
     }
 
     // MARK: - 提交（保存时统一回写）
@@ -427,10 +497,19 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         draft.groups[gi].sites[si].url = siteUrlField.stringValue
     }
 
+    private func commitHotkeyEditor() {
+        guard let hi = selectedHotkeyIndex() else { return }
+        let sel = hotkeyFunctionPopup.indexOfSelectedItem
+        if sel >= 0, sel < functionOptions.count {
+            draft.hotkeys[hi].function = functionOptions[sel].0
+        }
+    }
+
     // MARK: - 表格
 
     func numberOfRows(in tableView: NSTableView) -> Int {
         if tableView === groupsTable { return draft.groups.count }
+        if tableView === hotkeysTable { return draft.hotkeys.count }
         if let gi = selectedGroupIndex(), gi < draft.groups.count {
             return draft.groups[gi].sites.count
         }
@@ -449,38 +528,49 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
                 cb.state = g.enabled ? .on : .off
                 cb.tag = row
                 cell.addSubview(cb)
-                pinCenter(cb, in: cell, leading: 4)
+                pinCenter(cb, in: cell, leading: 6)
             } else {
-                cell.addSubview(textCell(g.name))
-                pinText(textCellHolder: cell)
+                addText(g.name, to: cell)
             }
-        } else {
+        } else if tableView === hotkeysTable {
+            guard row < draft.hotkeys.count else { return nil }
+            let cfg = draft.hotkeys[row]
+            if col.identifier.rawValue.hasPrefix("c-功能") {
+                addText(functionTitle(cfg.function), to: cell)
+            } else {
+                addText(cfg.binding?.display ?? "（未设置）", to: cell)
+            }
+        } else { // sites
             guard let gi = selectedGroupIndex(), gi < draft.groups.count,
                   row < draft.groups[gi].sites.count else { return nil }
             let s = draft.groups[gi].sites[row]
-            if col.identifier.rawValue == "名称" {
-                cell.addSubview(textCell(s.name))
-                pinText(textCellHolder: cell)
+            if col.identifier.rawValue.hasPrefix("c-名称") {
+                addText(s.name, to: cell)
             } else {
-                cell.addSubview(textCell(s.url))
-                pinText(textCellHolder: cell)
+                addText(s.url, to: cell)
             }
         }
         return cell
     }
 
-    private func textCell(_ text: String) -> NSTextField {
+    private func functionTitle(_ f: HotkeyFunction) -> String {
+        switch f {
+        case .specificGroup(let id):
+            let name = draft.groups.first { $0.id == id }?.name ?? "组"
+            return "切换至「\(name)」"
+        default:
+            return f.display
+        }
+    }
+
+    private func addText(_ text: String, to cell: NSTableCellView) {
         let tf = NSTextField(labelWithString: text)
         tf.lineBreakMode = .byTruncatingTail
         tf.font = .systemFont(ofSize: 12)
         tf.translatesAutoresizingMaskIntoConstraints = false
-        return tf
-    }
-
-    private func pinText(textCellHolder cell: NSTableCellView) {
-        guard let tf = cell.subviews.first as? NSTextField else { return }
+        cell.addSubview(tf)
         NSLayoutConstraint.activate([
-            tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 2),
+            tf.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 3),
             tf.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -4),
             tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
@@ -497,9 +587,13 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
     func tableViewSelectionDidChange(_ notification: Notification) {
         guard let table = notification.object as? NSTableView else { return }
         if table === groupsTable {
+            sitesTable.reloadData()      // ← 修 bug：切组后立即刷新站点表
             reloadGroupEditor()
+            updateSitesEnabled()
         } else if table === sitesTable {
             reloadSiteEditor()
+        } else if table === hotkeysTable {
+            reloadHotkeyEditor()
         }
     }
 
@@ -508,7 +602,7 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         guard row >= 0, row < draft.groups.count else { return }
         draft.groups[row].enabled = sender.state == .on
         groupsTable.reloadData()
-        rebuildActionPopups()
+        rebuildFunctionPopup()
         reloadGroupEditor()
     }
 
@@ -516,7 +610,7 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         commitGroupEditor()
         if sender === groupNameField || sender === groupEnableCheckbox {
             reloadGroupsRows()
-            rebuildActionPopups()
+            rebuildFunctionPopup()
         }
         reloadSiteEditor()
     }
@@ -524,7 +618,20 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
     @objc private func siteEditorChanged(_ sender: NSControl) {
         commitSiteEditor()
         if sender === siteNameField {
-            reloadSitesRows()
+            let sel = sitesTable.selectedRow
+            sitesTable.reloadData()
+            if sel >= 0 {
+                sitesTable.selectRowIndexes(IndexSet(integer: sel), byExtendingSelection: false)
+            }
+        }
+    }
+
+    @objc private func hotkeyFunctionChanged(_ sender: NSPopUpButton) {
+        commitHotkeyEditor()
+        let sel = hotkeysTable.selectedRow
+        hotkeysTable.reloadData()
+        if sel >= 0 {
+            hotkeysTable.selectRowIndexes(IndexSet(integer: sel), byExtendingSelection: false)
         }
     }
 
@@ -536,15 +643,7 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         }
     }
 
-    private func reloadSitesRows() {
-        let sel = sitesTable.selectedRow
-        sitesTable.reloadData()
-        if sel >= 0 {
-            sitesTable.selectRowIndexes(IndexSet(integer: sel), byExtendingSelection: false)
-        }
-    }
-
-    // MARK: - 增删
+    // MARK: - 增删（组 / 站点 / 快捷键）
 
     @objc private func addGroup() {
         commitAllEditors()
@@ -556,9 +655,10 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         }
         draft.groups.append(GroupConfig(name: name, sites: [SiteConfig(name: "新网址", url: "https://")]))
         groupsTable.reloadData()
-        rebuildActionPopups()
+        rebuildFunctionPopup()
         groupsTable.selectRowIndexes(IndexSet(integer: draft.groups.count - 1), byExtendingSelection: false)
         reloadGroupEditor()
+        updateSitesEnabled()
     }
 
     @objc private func removeGroup() {
@@ -568,11 +668,19 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         }
         commitAllEditors()
         guard let gi = selectedGroupIndex() else { return }
+        let removedID = draft.groups[gi].id
         draft.groups.remove(at: gi)
+        // 把“切到被删组”的快捷键清掉
+        draft.hotkeys.removeAll { f -> Bool in
+            if case .specificGroup(let id) = f.function { return id == removedID }
+            return false
+        }
         groupsTable.reloadData()
         sitesTable.reloadData()
-        rebuildActionPopups()
+        hotkeysTable.reloadData()
+        rebuildFunctionPopup()
         reloadGroupEditor()
+        updateSitesEnabled()
     }
 
     @objc private func addSite() {
@@ -594,35 +702,53 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
     }
 
     @objc private func removeSite() {
-        commitAllEditors()
-        guard let gi = selectedGroupIndex(), draft.groups[gi].sites.count > 1 else {
+        guard let gi = selectedGroupIndex() else { return }
+        guard draft.groups[gi].sites.count > 1 else {
             presentAlert(text: "每个组至少要保留一个网址。")
             return
         }
+        commitSiteEditor()
         guard let si = selectedSiteIndex() else { return }
         draft.groups[gi].sites.remove(at: si)
         sitesTable.reloadData()
         reloadSiteEditor()
     }
 
-    // MARK: - 快捷键录制（组呼出快捷键）
+    @objc private func addHotkey() {
+        commitHotkeyEditor()
+        draft.hotkeys.append(HotkeyConfig(function: .nextSite))
+        hotkeysTable.reloadData()
+        rebuildFunctionPopup()
+        hotkeysTable.selectRowIndexes(IndexSet(integer: draft.hotkeys.count - 1), byExtendingSelection: false)
+        reloadHotkeyEditor()
+    }
 
-    @objc private func recordGroupHotkey() {
-        commitGroupEditor()
-        guard let gi = selectedGroupIndex() else {
-            presentAlert(text: "请先在列表里选中一个网址组。")
+    @objc private func removeHotkey() {
+        commitHotkeyEditor()
+        guard let hi = selectedHotkeyIndex() else { return }
+        draft.hotkeys.remove(at: hi)
+        hotkeysTable.reloadData()
+        rebuildFunctionPopup()
+        reloadHotkeyEditor()
+    }
+
+    // MARK: - 快捷键录制
+
+    @objc private func recordHotkeyBinding() {
+        commitHotkeyEditor()
+        guard selectedHotkeyIndex() != nil else {
+            presentAlert(text: "请先选中一条快捷键。")
             return
         }
-        _ = gi
         guard recordingMonitor == nil else { return }
-        groupHotkeyButton.title = "按下新快捷键…（Esc 取消）"
+        hotkeyRecordButton.title = "按下新按键…（Esc 取消）"
         recordingMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self else { return event }
             let code = event.keyCode
             if Self.modifierKeyCodes.contains(code) { return event }
             if code == 53 {
                 self.stopRecording()
-                self.reloadGroupEditor()
+                self.reloadHotkeyEditor()
                 return event
             }
             var mods: UInt32 = 0
@@ -631,9 +757,14 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
             if f.contains(.option)  { mods |= GlobalHotKey.Mods.option }
             if f.contains(.shift)   { mods |= GlobalHotKey.Mods.shift }
             if f.contains(.control) { mods |= GlobalHotKey.Mods.control }
-            self.commitGroupHotkey(HotKeyBinding(keyCode: UInt32(code), modifiers: mods))
+            self.commitHotkeyBinding(HotKeyBinding(keyCode: UInt32(code), modifiers: mods))
             self.stopRecording()
-            self.reloadGroupEditor()
+            let sel = self.hotkeysTable.selectedRow
+            self.hotkeysTable.reloadData()
+            if sel >= 0 {
+                self.hotkeysTable.selectRowIndexes(IndexSet(integer: sel), byExtendingSelection: false)
+            }
+            self.reloadHotkeyEditor()
             return event
         }
     }
@@ -647,37 +778,21 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         }
     }
 
-    private func commitGroupHotkey(_ binding: HotKeyBinding) {
-        guard let gi = selectedGroupIndex() else { return }
-        draft.groups[gi].hotKey = binding
+    private func commitHotkeyBinding(_ binding: HotKeyBinding) {
+        guard let hi = selectedHotkeyIndex() else { return }
+        draft.hotkeys[hi].binding = binding
     }
 
-    @objc private func clearGroupHotkey() {
-        guard let gi = selectedGroupIndex() else { return }
-        draft.groups[gi].hotKey = nil
-        reloadGroupEditor()
+    @objc private func clearHotkeyBinding() {
+        guard let hi = selectedHotkeyIndex() else { return }
+        draft.hotkeys[hi].binding = nil
+        reloadHotkeyEditor()
     }
 
-    // MARK: - 全局动作
-
-    @objc private func globalChanged(_ sender: NSControl) {
+    @objc private func globalIdleChanged(_ sender: NSControl) {
         let t = globalIdleField.stringValue.trimmingCharacters(in: .whitespaces)
         if let v = Int(t), v >= 0 {
             draft.globalIdleMinutes = v
-        }
-    }
-
-    @objc private func dActionChanged(_ sender: NSPopUpButton) {
-        let idx = sender.indexOfSelectedItem
-        if idx >= 0, idx < dActions.count {
-            draft.dAction = dActions[idx]
-        }
-    }
-
-    @objc private func eActionChanged(_ sender: NSPopUpButton) {
-        let idx = sender.indexOfSelectedItem
-        if idx >= 0, idx < eActions.count {
-            draft.eAction = eActions[idx]
         }
     }
 
@@ -685,6 +800,7 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
 
     @objc private func exportClicked() {
         commitAllEditors()
+        commitHotkeyEditor()
         let panel = NSSavePanel()
         panel.allowedContentTypes = [.json]
         panel.nameFieldStringValue = "悬浮窗配置.json"
@@ -720,15 +836,12 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
 
     @objc private func saveClicked() {
         commitAllEditors()
+        commitHotkeyEditor()
 
         let t = globalIdleField.stringValue.trimmingCharacters(in: .whitespaces)
-        if let v = Int(t), v >= 0 {
-            draft.globalIdleMinutes = v
-        } else {
-            draft.globalIdleMinutes = 15
-        }
+        draft.globalIdleMinutes = (Int(t).flatMap { $0 >= 0 ? $0 : nil }) ?? 15
 
-        // 空网址清理 + 校验
+        // 清理：空网址站点、空组、未录按键的快捷键行
         for i in draft.groups.indices {
             draft.groups[i].sites.removeAll { $0.url.trimmingCharacters(in: .whitespaces).isEmpty }
         }
@@ -737,7 +850,7 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
             presentAlert(text: "至少需要一个包含网址的组。")
             return
         }
-
+        draft.hotkeys.removeAll { $0.binding == nil }
         if let conflict = hotkeyConflict(in: draft) {
             presentAlert(text: conflict)
             return
@@ -760,31 +873,20 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
     // MARK: - 校验
 
     private func hotkeyConflict(in settings: AppSettings) -> String? {
-        var map: [String: String] = [:]
+        var map: [String: (String, String)] = [:]
         var conflict: String?
-
-        func add(_ binding: HotKeyBinding, _ label: String) {
-            let key = "\(binding.keyCode)|\(binding.modifiers)"
-            if let owner = map[key] {
-                conflict = "快捷键 \(binding.display) 同时被「\(owner)」和「\(label)」使用，会产生冲突。\n请换一个或清除其中一个。"
+        for cfg in settings.hotkeys {
+            guard let b = cfg.binding else { continue }
+            let key = "\(b.keyCode)|\(b.modifiers)"
+            if let (owner, _) = map[key] {
+                conflict = "快捷键 \(b.display) 同时被「\(owner)」和「\(functionTitle(cfg.function))」占用。\n请换一个或清除其中一个。"
+                break
             } else {
-                map[key] = label
-            }
-        }
-
-        add(HotKeyBinding(keyCode: Config.HotKey.toggleKeyCode, modifiers: Config.HotKey.toggleModifiers), "显示/隐藏（⌥Space）")
-        add(HotKeyBinding(keyCode: Config.HotKey.switchKeyCodeD, modifiers: Config.HotKey.switchModifiers), "⌥⌘D 动作")
-        add(HotKeyBinding(keyCode: Config.HotKey.switchKeyCodeE, modifiers: Config.HotKey.switchModifiers), "⌥⌘E 动作")
-
-        for g in settings.groups where g.enabled {
-            if let h = g.hotKey {
-                add(h, "组「\(g.name)」")
+                map[key] = (functionTitle(cfg.function), b.display)
             }
         }
         return conflict
     }
-
-    // MARK: - 弹窗
 
     private func presentAlert(text: String) {
         let a = NSAlert()

@@ -1,32 +1,45 @@
 import Foundation
 
-/// 配置持久化：存 UserDefaults（JSON），支持导出/导入 JSON 文件
+/// 配置持久化：存 UserDefaults（JSON），支持导出/导入，并做多版本迁移。
 final class SettingsStore {
 
     static let storageKey = "AppSettings"
 
-    /// 读取配置；首次运行生成默认；自动迁移 v0.2 的「浮窗(panes)」结构 → 分组(groups)
+    /// 读取配置；自动把 v0.2(浮窗) / v0.3(组+D/E动作) 迁移到 v0.4(组+统一快捷键表)
     static func load() -> AppSettings {
         let defaults = UserDefaults.standard
-
-        // 1) 新版结构
-        if let data = defaults.data(forKey: storageKey),
-           let settings = try? JSONDecoder().decode(AppSettings.self, from: data),
-           !settings.groups.isEmpty {
-            return settings
+        guard let data = defaults.data(forKey: storageKey) else {
+            return defaultsInstall()
         }
 
-        // 2) 旧版（v0.2 单组多浮窗）结构 → 迁移
-        if let data = defaults.data(forKey: storageKey),
-           let legacy = try? JSONDecoder().decode(LegacyAppSettings.self, from: data),
+        // 1) 当前版
+        if let s = try? JSONDecoder().decode(AppSettings.self, from: data), !s.groups.isEmpty {
+            return s
+        }
+
+        // 2) v0.3 分组版（含 dAction/eAction + 组 hotKey）
+        if let legacy = try? JSONDecoder().decode(LegacyV3Settings.self, from: data),
+           !legacy.groups.isEmpty {
+            let migrated = legacy.migrated()
+            save(migrated)
+            return migrated
+        }
+
+        // 3) v0.2 浮窗版 → 组 + 默认快捷键
+        if let legacy = try? JSONDecoder().decode(LegacyV2Settings.self, from: data),
            !legacy.panes.isEmpty {
             let migrated = legacy.migrated()
             save(migrated)
             return migrated
         }
 
-        // 3) 全新安装（并吸收更早 single-window 版改过的 URL）
+        // 全新安装（吸收更早 single-window 版改过的 URL）
+        return defaultsInstall()
+    }
+
+    private static func defaultsInstall() -> AppSettings {
         var fresh = AppSettings.defaults()
+        let defaults = UserDefaults.standard
         if let url = defaults.string(forKey: "DoubaoURL"), fresh.groups.first?.sites.count ?? 0 > 0 {
             fresh.groups[0].sites[0].url = url
         }
@@ -65,11 +78,126 @@ final class SettingsStore {
     }
 }
 
-// MARK: - v0.2 旧结构迁移
+// MARK: - 迁移
 
-/// v0.2 的「浮窗」结构（每个浮窗 = 一个组内网址）
-private struct LegacyAppSettings: Codable {
-    struct LegacyPane: Codable {
+/// 旧的 ⌥⌘D/E 动作（与 v0.2/v0.3 的 GlobalSwitchAction 同构）
+private enum LegacyAction: Codable, Equatable {
+    case next, previous, specific(UUID), none
+
+    private enum Kind: String, Codable { case next, previous, specific, none }
+    private enum CodingKeys: String, CodingKey { case kind, id }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        switch try c.decode(Kind.self, forKey: .kind) {
+        case .next: self = .next
+        case .previous: self = .previous
+        case .none: self = .none
+        case .specific:
+            if let id = try? c.decode(UUID.self, forKey: .id) { self = .specific(id) }
+            else { self = .none }
+        }
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        switch self {
+        case .next: try c.encode(Kind.next, forKey: .kind)
+        case .previous: try c.encode(Kind.previous, forKey: .kind)
+        case .none: try c.encode(Kind.none, forKey: .kind)
+        case .specific(let id):
+            try c.encode(Kind.specific, forKey: .kind)
+            try c.encode(id, forKey: .id)
+        }
+    }
+
+    var function: HotkeyFunction? {
+        switch self {
+        case .next: return .nextSite
+        case .previous: return .previousSite
+        case .specific(let id): return .specificGroup(id)
+        case .none: return nil
+        }
+    }
+}
+
+/// v0.3 的分组结构
+private struct LegacyV3Settings: Codable {
+    struct G: Codable {
+        var id: UUID
+        var name: String
+        var sites: [SiteConfig]
+        var hotKey: HotKeyBinding?
+        var enabled: Bool
+        var idleMinutes: Int?
+        var frame: FrameSnapshot?
+        var activeSiteIndex: Int
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, sites, hotKey, enabled, idleMinutes, frame, activeSiteIndex
+        }
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            id = try c.decode(UUID.self, forKey: .id)
+            name = try c.decodeIfPresent(String.self, forKey: .name) ?? "组"
+            sites = try c.decodeIfPresent([SiteConfig].self, forKey: .sites) ?? []
+            hotKey = try c.decodeIfPresent(HotKeyBinding.self, forKey: .hotKey)
+            enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+            idleMinutes = try c.decodeIfPresent(Int.self, forKey: .idleMinutes)
+            frame = try c.decodeIfPresent(FrameSnapshot.self, forKey: .frame)
+            activeSiteIndex = try c.decodeIfPresent(Int.self, forKey: .activeSiteIndex) ?? 0
+        }
+    }
+    var groups: [G]
+    var globalIdleMinutes: Int
+    var dAction: LegacyAction
+    var eAction: LegacyAction
+
+    func migrated() -> AppSettings {
+        let newGroups = groups.map { g in
+            GroupConfig(
+                id: g.id, name: g.name, sites: g.sites,
+                enabled: g.enabled, idleMinutes: g.idleMinutes,
+                frame: g.frame, activeSiteIndex: g.activeSiteIndex
+            )
+        }
+        var hotkeys: [HotkeyConfig] = []
+
+        // ⌥Space 显示/隐藏当前组（必须有，保证基础可用）
+        hotkeys.append(HotkeyConfig(
+            function: .toggleCurrent,
+            binding: HotKeyBinding(keyCode: Config.HotKey.toggleKeyCode,
+                                   modifiers: Config.HotKey.toggleModifiers)))
+
+        // 旧 dAction/eAction
+        if let f = dAction.function {
+            hotkeys.append(HotkeyConfig(
+                function: f,
+                binding: HotKeyBinding(keyCode: Config.HotKey.switchKeyCodeD,
+                                       modifiers: Config.HotKey.switchModifiers)))
+        }
+        if let f = eAction.function {
+            hotkeys.append(HotkeyConfig(
+                function: f,
+                binding: HotKeyBinding(keyCode: Config.HotKey.switchKeyCodeE,
+                                       modifiers: Config.HotKey.switchModifiers)))
+        }
+
+        // 旧的“组专属快捷键” → 变成“切换至指定组”行
+        for g in groups where g.hotKey != nil {
+            hotkeys.append(HotkeyConfig(
+                function: .specificGroup(g.id),
+                binding: g.hotKey))
+        }
+
+        return AppSettings(groups: newGroups,
+                           globalIdleMinutes: globalIdleMinutes,
+                           hotkeys: hotkeys)
+    }
+}
+
+/// v0.2 的浮窗结构
+private struct LegacyV2Settings: Codable {
+    struct Pane: Codable {
         var id: UUID
         var name: String
         var url: String
@@ -78,27 +206,19 @@ private struct LegacyAppSettings: Codable {
         var idleMinutes: Int?
         var frame: FrameSnapshot?
     }
-    var panes: [LegacyPane]
+    var panes: [Pane]
     var globalIdleMinutes: Int
-    var dAction: GlobalSwitchAction
-    var eAction: GlobalSwitchAction
+    var dAction: LegacyAction
+    var eAction: LegacyAction
 
     func migrated() -> AppSettings {
-        let groups = panes.map { pane in
-            GroupConfig(
-                id: pane.id,
-                name: pane.name,
-                sites: [SiteConfig(name: pane.name, url: pane.url)],
-                hotKey: pane.hotKey,
-                enabled: pane.enabled,
-                idleMinutes: pane.idleMinutes,
-                frame: pane.frame,
-                activeSiteIndex: 0
-            )
+        let groups = panes.map { p in
+            GroupConfig(id: p.id, name: p.name,
+                        sites: [SiteConfig(name: p.name, url: p.url)],
+                        enabled: p.enabled, idleMinutes: p.idleMinutes, frame: p.frame)
         }
         return AppSettings(groups: groups,
                            globalIdleMinutes: globalIdleMinutes,
-                           dAction: dAction,
-                           eAction: eAction)
+                           hotkeys: AppSettings.defaults().hotkeys)
     }
 }

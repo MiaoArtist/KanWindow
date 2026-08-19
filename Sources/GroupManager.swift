@@ -103,17 +103,46 @@ final class GroupManager {
         }
     }
 
-    // MARK: - 动作分发
+    // MARK: - 动作分发（由统一快捷键表驱动）
 
-    func perform(_ action: GlobalSwitchAction) {
-        switch action {
-        case .next: cycleSite(1)
-        case .previous: cycleSite(-1)
+    func perform(_ function: HotkeyFunction) {
+        switch function {
+        case .toggleCurrent:
+            toggle()
+        case .nextSite:
+            cycleSite(1)
+        case .previousSite:
+            cycleSite(-1)
+        case .nextGroup:
+            cycleGroup(1)
+        case .previousGroup:
+            cycleGroup(-1)
         case .specificGroup(let id):
             if let c = controllers[id] {
                 showController(c)
             }
-        case .none: break
+        case .refresh:
+            refreshCurrentGroup()
+        }
+    }
+
+    /// 切换上/下一个“组”（使目标组成为当前组并呼出）
+    private func cycleGroup(_ direction: Int) {
+        guard !order.isEmpty else { return }
+        var startIdx = order.count - 1
+        if let act = activeController, let i = order.firstIndex(of: act.id) {
+            startIdx = i
+        }
+        let target = (startIdx + direction + order.count) % order.count
+        if let c = controllers[order[target]] {
+            showController(c)
+        }
+    }
+
+    /// 刷新当前组浮窗页面
+    private func refreshCurrentGroup() {
+        if let act = activeController {
+            act.reloadCurrentSite()
         }
     }
 
@@ -179,40 +208,19 @@ final class GroupManager {
         }
     }
 
-    // MARK: - 热键编排
+    // MARK: - 热键编排（全部来自“统一快捷键表”）
 
     func applyHotkeys() {
         var specs: [GlobalHotKey.Spec] = []
-
-        specs.append(GlobalHotKey.Spec(id: 1,
-                                       keyCode: Config.HotKey.toggleKeyCode,
-                                       modifiers: Config.HotKey.toggleModifiers) { [weak self] in
-            self?.toggle()
-        })
-
-        // ⌥⌘D / ⌥⌘E = 当前组内上/下切网址（或按设置做“切到指定组/无”）
-        specs.append(GlobalHotKey.Spec(id: 2,
-                                       keyCode: Config.HotKey.switchKeyCodeD,
-                                       modifiers: Config.HotKey.switchModifiers) { [weak self] in
-            self?.perform(self?.settings.dAction ?? .none)
-        })
-        specs.append(GlobalHotKey.Spec(id: 3,
-                                       keyCode: Config.HotKey.switchKeyCodeE,
-                                       modifiers: Config.HotKey.switchModifiers) { [weak self] in
-            self?.perform(self?.settings.eAction ?? .none)
-        })
-
-        // 每个启用组的专属呼出快捷键
-        for (i, g) in settings.groups.enumerated() {
-            guard g.enabled, let h = g.hotKey else { continue }
-            let groupID = g.id
-            specs.append(GlobalHotKey.Spec(id: UInt32(1000 + i),
-                                           keyCode: h.keyCode,
-                                           modifiers: h.modifiers) { [weak self] in
-                self?.showGroup(id: groupID)
+        for (i, cfg) in settings.hotkeys.enumerated() {
+            guard let b = cfg.binding else { continue }
+            let function = cfg.function
+            specs.append(GlobalHotKey.Spec(id: UInt32(100 + i),
+                                           keyCode: b.keyCode,
+                                           modifiers: b.modifiers) { [weak self] in
+                self?.perform(function)
             })
         }
-
         GlobalHotKey.apply(specs)
     }
 
