@@ -13,7 +13,8 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     private(set) var window: NSWindow?
     private var webView: WKWebView?
     private var loadedURL: String?
-    private var idleTimer: Timer?
+    /// 最后一次用户在该浮窗内活动的时间（自动关闭的判据）
+    private var lastActivity = Date.distantPast
 
     private let onFrameChanged: (UUID, FrameSnapshot) -> Void
     private let onActiveSiteChanged: (UUID, Int) -> Void
@@ -41,12 +42,9 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         if webView != nil {
             loadCurrentSiteIfChanged()
         }
-        if window?.isVisible == true {
-            restartIdle()
-        }
     }
 
-    // MARK: - 显示 / 隐藏
+    // MARK: - 显示 / 隐藏 / 关闭
 
     func show(rememberedFrame frame: FrameSnapshot?) {
         createWindowIfNeeded(rememberedFrame: frame)
@@ -54,26 +52,25 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
         loadCurrentSiteIfChanged()
-        startIdle()
+        lastActivity = Date()   // 呼出即视为开始新的闲置计时
     }
 
     func hide() {
         window?.orderOut(nil)
-        stopIdle()
         storeFrame()
     }
 
     func dispose() {
-        stopIdle()
         storeFrame()
         window?.orderOut(nil)
         webView = nil
         window = nil
     }
 
+    /// 窗口内发生交互（点击/滚动/输入/拖动/缩放/切站等）→ 刷新最后活动时间
     func noteInteraction() {
         if window?.isVisible == true {
-            startIdle()
+            lastActivity = Date()
         }
     }
 
@@ -88,7 +85,7 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         onActiveSiteChanged(id, next)
         window?.title = titleText()
         loadCurrentSiteIfChanged()
-        restartIdle()
+        noteInteraction()
     }
 
     /// 直接切到某个网址（供设置或外部调用）；返回是否成功
@@ -99,30 +96,34 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         onActiveSiteChanged(id, siteIndex)
         window?.title = titleText()
         loadCurrentSiteIfChanged()
-        restartIdle()
+        noteInteraction()
         return true
     }
 
     // MARK: - 闲置自动关闭
     // 语义说明：浮窗闲置满 N 分钟，不是简单“隐藏”，而是【彻底关闭并释放网页内存】；
     // 需要时再用快捷键呼出，会回到原位置、原网站（重新加载）。
+    // 实现：不依赖单个长计时器，而是由 Manager 的“看门狗”每分钟轮询本方法。
 
     private func effectiveIdle() -> Int {
         config.effectiveIdle(global: globalIdle)
     }
 
-    private func startIdle() {
-        stopIdle()
+    /// 看门狗调用：距最后一次活动超过阈值则彻底关闭
+    func checkAutoClose(now: Date) {
+        guard window?.isVisible == true else { return }
         let minutes = effectiveIdle()
         guard minutes > 0 else { return }   // 0/负数 = 不自动关闭
 
-        let name = config.name
-        let mins = minutes
-        idleTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval(minutes * 60),
-                                         repeats: false) { [weak self] _ in
-            guard let self = self, self.window?.isVisible == true else { return }
-            self.dispose()
-            self.postNotification("「\(name)」已自动关闭（\(mins) 分钟未使用），已释放内存")
+        // --idlefast：调试用，把“分钟”按“秒”当阈值，快速验证自动关闭
+        let debugFast = ProcessInfo.processInfo.arguments.contains("--idlefast")
+        let threshold: TimeInterval = debugFast ? TimeInterval(minutes) : TimeInterval(minutes * 60)
+
+        if now.timeIntervalSince(lastActivity) >= threshold {
+            let name = config.name
+            let mins = minutes
+            dispose()
+            postNotification("「\(name)」已自动关闭（\(mins) 分钟未使用），已释放内存")
         }
     }
 
@@ -130,7 +131,7 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     func reloadCurrentSite() {
         guard window != nil, let wv = webView else { return }
         wv.reload()
-        restartIdle()
+        noteInteraction()
     }
 
     // MARK: - 页面缩放（⌘+ / ⌘- / ⌘0）
@@ -141,22 +142,13 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         let base = wv.magnification == 0 ? 1.0 : wv.magnification
         wv.setMagnification(base * factor,
                             centeredAt: NSPoint(x: wv.bounds.midX, y: wv.bounds.midY))
-        restartIdle()
+        noteInteraction()
     }
 
     func resetZoom() {
         guard let wv = webView else { return }
         wv.setMagnification(1.0, centeredAt: NSPoint(x: wv.bounds.midX, y: wv.bounds.midY))
-        restartIdle()
-    }
-
-    private func restartIdle() {
-        startIdle()
-    }
-
-    private func stopIdle() {
-        idleTimer?.invalidate()
-        idleTimer = nil
+        noteInteraction()
     }
 
     // MARK: - 窗口创建
@@ -233,11 +225,13 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     func windowDidMove(_ notification: Notification) {
         guard let w = window, w.isVisible else { return }
         onFrameChanged(id, FrameSnapshot(from: w.frame))
+        noteInteraction()   // 拖动窗口也算“活动”
     }
 
     func windowDidResize(_ notification: Notification) {
         guard let w = window, w.isVisible else { return }
         onFrameChanged(id, FrameSnapshot(from: w.frame))
+        noteInteraction()   // 缩放窗口也算“活动”
     }
 
     func windowShouldClose(_ sender: NSWindow) -> Bool {

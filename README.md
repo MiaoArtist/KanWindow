@@ -6,6 +6,8 @@
 
 ![App 图标](Resources/AppIcon.icns)
 
+> [English](README_EN.md) · 简体中文
+
 ---
 
 ## 🪟 分组机制（核心）
@@ -61,7 +63,7 @@ cd KanWindow
 open "/Applications/窥窗.app"
 ```
 
-发布包：`在线-AI-悬浮窗-*.zip`，解压拖进「应用程序」即可。
+发布包：`窥窗-*.zip`（或 Release 里的 `KanWindow-v*.zip`），解压拖进「应用程序」即可。
 
 ### 📡 首次授权（一次性）
 
@@ -93,7 +95,7 @@ defaults export dev.miaoartist.kanwindow - -
 ## 🧪 打发布包
 
 ```bash
-./scripts/package.sh    # 生成 build/在线-AI-悬浮窗-<日期>.zip
+./scripts/package.sh    # 生成 build/窥窗-<日期>.zip
 ```
 
 ## 📂 项目结构

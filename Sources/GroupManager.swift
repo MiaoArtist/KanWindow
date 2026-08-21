@@ -8,6 +8,7 @@ final class GroupManager {
     private var order: [UUID] = []                 // 启用的组顺序
     private(set) weak var activeController: GroupController?
     private var localMonitor: Any?
+    private var idleWatchdog: Timer?
 
     var onSettingsChanged: (() -> Void)?
 
@@ -15,7 +16,28 @@ final class GroupManager {
         self.settings = settings
         rebuildControllers()
         installLocalMonitor()
+        startIdleWatchdog()
         applyHotkeys()
+    }
+
+    /// 自动关闭看门狗：每 60 秒检查一次所有浮窗的最后活动时间。
+    /// （用周期轮询而不用单次长计时器，避免被事件追踪等模式延误/反复重置而“永远不关”）
+    private func startIdleWatchdog() {
+        let debugFast = ProcessInfo.processInfo.arguments.contains("--idlefast")
+        let interval: TimeInterval = debugFast ? 1.0 : 60.0
+        let timer = Timer(timeInterval: interval, repeats: true) { [weak self] _ in
+            self?.reviewAutoClose()
+        }
+        timer.tolerance = debugFast ? 0.1 : 5.0
+        RunLoop.main.add(timer, forMode: .common)
+        idleWatchdog = timer
+    }
+
+    private func reviewAutoClose() {
+        let now = Date()
+        for c in controllers.values {
+            c.checkAutoClose(now: now)
+        }
     }
 
     // MARK: - 公开状态
