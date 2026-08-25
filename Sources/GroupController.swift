@@ -65,6 +65,9 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         window?.orderOut(nil)
         webView = nil
         window = nil
+        // 关键：下次重新创建 WebView 时必须重新加载当前网址，
+        // 否则 loadCurrentSiteIfChanged() 会认为“网址没变”而跳过加载 → 白屏
+        loadedURL = nil
     }
 
     /// 窗口内发生交互（点击/滚动/输入/拖动/缩放/切站等）→ 刷新最后活动时间
@@ -155,6 +158,8 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
 
     private func createWindowIfNeeded(rememberedFrame remembered: FrameSnapshot?) {
         guard window == nil else { return }
+        // 新窗口 = 全新 WebView，必须强制加载当前网址
+        loadedURL = nil
 
         let w = NSWindow(
             contentRect: NSRect(x: 0, y: 0,
@@ -250,6 +255,17 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             webView.load(navigationAction.request)
         }
         return nil
+    }
+
+
+    // MARK: - 网页进程崩溃/被系统终止后的自愈
+    // B 站这类重页面在 8GB 内存的机器上偶尔会被 WebContent 进程杀/崩，
+    // 重新加载而不是一直白屏。
+
+    func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        // 清掉“已加载”缓存，触发重新加载当前网址
+        loadedURL = nil
+        loadCurrentSiteIfChanged()
     }
 
 
