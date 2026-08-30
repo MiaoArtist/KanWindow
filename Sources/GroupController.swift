@@ -15,6 +15,10 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     private var loadedURL: String?
     /// 最后一次用户在该浮窗内活动的时间（自动关闭的判据）
     private var lastActivity = Date.distantPast
+    /// 显示前的前台 App（隐藏时把系统焦点还给它）
+    private var restoreApp: NSRunningApplication?
+    /// 上次隐藏时抓取的网页焦点/滚动位置（{selector, scrollX, scrollY}）
+    private var lastFocusInfo: [String: Any]?
 
     private let onFrameChanged: (UUID, FrameSnapshot) -> Void
     private let onActiveSiteChanged: (UUID, Int) -> Void
@@ -47,20 +51,32 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     // MARK: - 显示 / 隐藏 / 关闭
 
     func show(rememberedFrame frame: FrameSnapshot?) {
+        // 记录显示前的前台 App，隐藏时把系统焦点还给它
+        if let front = NSWorkspace.shared.frontmostApplication,
+           front.bundleIdentifier != Config.bundleIdentifier {
+            restoreApp = front
+        }
         createWindowIfNeeded(rememberedFrame: frame)
         guard let w = window else { return }
         NSApp.activate(ignoringOtherApps: true)
         w.makeKeyAndOrderFront(nil)
         loadCurrentSiteIfChanged()
         lastActivity = Date()   // 呼出即视为开始新的闲置计时
+        // 恢复网页内上次的焦点/滚动位置（页面没加载完时 didFinish 会再恢复一次）
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+            self?.restoreFocusAndScroll()
+        }
     }
 
     func hide() {
+        captureFocusPosition()   // 隐藏前抓取网页内焦点/滚动位置
         window?.orderOut(nil)
         storeFrame()
+        restoreFrontmostApp()     // 把系统焦点还给显示前的 App
     }
 
     func dispose() {
+        captureFocusPosition()
         storeFrame()
         window?.orderOut(nil)
         webView = nil
@@ -68,6 +84,7 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         // 关键：下次重新创建 WebView 时必须重新加载当前网址，
         // 否则 loadCurrentSiteIfChanged() 会认为“网址没变”而跳过加载 → 白屏
         loadedURL = nil
+        restoreFrontmostApp()
     }
 
     /// 窗口内发生交互（点击/滚动/输入/拖动/缩放/切站等）→ 刷新最后活动时间
@@ -152,6 +169,93 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         guard let wv = webView else { return }
         wv.setMagnification(1.0, centeredAt: NSPoint(x: wv.bounds.midX, y: wv.bounds.midY))
         noteInteraction()
+    }
+
+    // MARK: - 焦点位置记忆
+    // 打开弹窗时恢复到上次网页内焦点（文本框等）+ 页面滚动位置；
+    // 隐藏弹窗时把系统焦点还给显示前正在使用的 App。
+
+    /// 抓取当前网页内的焦点元素（稳定选择器）与滚动位置，供下次打开时恢复
+    private func captureFocusPosition() {
+        guard let wv = webView, window?.isVisible == true else { return }
+        let js = """
+        (function(){
+          try {
+            var el = document.activeElement;
+            var body = document.body;
+            if (!el || el === body || el === document.documentElement) {
+              return {hasFocus:false, selector:null, scrollX:window.scrollX, scrollY:window.scrollY};
+            }
+            var path = [];
+            var node = el;
+            while (node && node.nodeType === 1 && node !== body && node !== document.documentElement) {
+              var sel = node.tagName.toLowerCase();
+              if (node.id) { sel += '#' + node.id; path.unshift(sel); break; }
+              var parent = node.parentElement;
+              if (parent) {
+                var kids = Array.prototype.slice.call(parent.children).filter(function(c){ return c.tagName === node.tagName; });
+                if (kids.length > 1) { sel += ':nth-of-type(' + (kids.indexOf(node) + 1) + ')'; }
+              }
+              path.unshift(sel);
+              node = parent;
+            }
+            return {hasFocus:true, selector: path.join(' > ') || el.tagName.toLowerCase(), scrollX:window.scrollX, scrollY:window.scrollY};
+          } catch(e) {
+            return {hasFocus:false, selector:null, scrollX:window.scrollX, scrollY:window.scrollY};
+          }
+        })()
+        """
+        wv.evaluateJavaScript(js) { [weak self] result, _ in
+            guard let self = self else { return }
+            if let dict = result as? [String: Any] {
+                self.lastFocusInfo = dict
+            }
+        }
+    }
+
+    /// 恢复上次的滚动位置与网页内焦点
+    private func restoreFocusAndScroll() {
+        guard window?.isVisible == true, let wv = webView, let info = lastFocusInfo else { return }
+        let selector = (info["selector"] as? String) ?? ""
+        let sx = (info["scrollX"] as? NSNumber)?.doubleValue
+        let sy = (info["scrollY"] as? NSNumber)?.doubleValue
+        let selJSON = jsStringLiteral(selector)
+        let sxJS = sx.map { "\($0)" } ?? "null"
+        let syJS = sy.map { "\($0)" } ?? "null"
+        let js = """
+        (function(){
+          if (\(sxJS) !== null && \(syJS) !== null) {
+            try { window.scrollTo(\(sxJS), \(syJS)); } catch(e) {}
+          }
+          if (\(selJSON)) {
+            var el = null;
+            try { el = document.querySelector(\(selJSON)); } catch(e) {}
+            if (el) {
+              try { el.focus({preventScroll:true}); } catch(e) { try { el.focus(); } catch(e2){} }
+            }
+          }
+        })()
+        """
+        wv.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    /// 把系统焦点还给显示前的 App（仅在焦点仍在我们这边时才归还）
+    private func restoreFrontmostApp() {
+        guard let app = restoreApp else { return }
+        restoreApp = nil
+        if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == Config.bundleIdentifier {
+            app.activate(options: [.activateIgnoringOtherApps])
+        }
+    }
+
+    /// 把 Swift 字符串转成 JS 字符串字面量（安全转义）
+    private func jsStringLiteral(_ s: String) -> String {
+        let escaped = s
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+            .replacingOccurrences(of: "\n", with: "\\n")
+            .replacingOccurrences(of: "\r", with: "\\r")
+        return "\"\(escaped)\""
     }
 
     // MARK: - 窗口创建
@@ -266,6 +370,11 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         // 清掉“已加载”缓存，触发重新加载当前网址
         loadedURL = nil
         loadCurrentSiteIfChanged()
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // 页面（重新）加载完成 → 恢复上次的焦点/滚动位置
+        restoreFocusAndScroll()
     }
 
 
