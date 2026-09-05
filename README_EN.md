@@ -37,7 +37,7 @@ Also fixed: **left-click menu-bar icon** = show/hide (no menu, no freeze); **⌘
 - 🎛 **Settings panel** (menu bar right-click → Settings, or ⌘,): three framed sections — **网址组** (name / enable / auto-close), **组内网址** (grayed out until a group is selected), **全局快捷键** (add/remove with ＋/−, pick function, record keys). Plus import/export JSON and restore defaults.
 - 📐 **Remembers position & size** per group, and remembers which site you were on when reopening.
 - 🎯 **Focus memory**: reopening a floating window restores the page's previous scroll position and in-page focus (e.g. a text box — start typing right away); hiding the window with a hotkey hands the system focus back to the app you were using before, so you can keep typing without clicking back.
-- 🧐 **Minimal Bilibili search (self-restraint mode)**: the 娱乐 group opens 「B站极简搜索」 by default — just a search box, no feeds, no recommendations, no danmaku. Results show only title, play count, publish date and uploader; opening a video shows only the player and comments. A tiny built-in local proxy (127.0.0.1:9327) serves the page and relays Bilibili API calls — no third-party extension required.
+- 🧐 **Bilibili page cleaner (self-restraint mode)**: the 娱乐 group's Bilibili site gets a cleanup script injected (same idea as the "哔哩哔哩页面清理" userscript): the homepage keeps only the search box and hides the feed and entertainment entries; watch pages hide related videos and "up next" while keeping the native player (quality / speed / danmaku controls), thumbnails and comments. Every in-site navigation stays inside the cleaned UI — no escape back to the full site.
 - 📋 **Paste works**: a standard Edit menu is wired up, so ⌘V works in WebView text boxes.
 - 🔍 **Page zoom**: ⌘+ / ⌘- / ⌘0 zoom in / out / actual size for the current floating window (handy for desktop-oriented sites like Bilibili); trackpad pinch zoom also works.
 - 🧭 **In-page navigation**: links that would open a new tab / new window (e.g. Bilibili videos and dynamics) now open **inside the current floating window** instead of doing nothing.
@@ -114,13 +114,12 @@ KanWindow/
 │   ├── GlobalHotKey.swift             # Carbon global hotkeys (dynamic re-register)
 │   ├── GroupController.swift          # one window per group: WebView, group switching, zoom, auto-close
 │   ├── GroupManager.swift             # orchestration, hotkeys, show-all, auto-close watchdog
-│   ├── BiliSearchServer.swift         # minimal Bilibili search local proxy (127.0.0.1:9327)
 │   └── SettingsWindowController.swift # settings panel
 ├── Resources/
 │   ├── AppIcon.svg / MenuBarIcon.svg   # original SVG icon sources
 │   ├── AppIcon.icns                    # rendered app icon
 │   ├── MenuBarIcon.png(@2x)            # menu-bar template icon
-│   └── biliSearch.html                 # minimal Bilibili search page (search/list/player+comments)
+│   └── bilibiliClean.js                # Bilibili page-cleaner injection script (self-restraint mode)
 ├── scripts/
 │   ├── build.sh           # build (.app), UNIVERSAL dual-arch, ad-hoc signing
 │   ├── package.sh         # zip a release

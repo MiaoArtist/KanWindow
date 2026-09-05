@@ -9,9 +9,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var trustPollTimer: Timer?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // B站极简搜索的本地代理服务器（端口 127.0.0.1:9327）
-        BiliSearchServer.shared.start()
-        Self.ensureBiliSearchEntry()
         manager = GroupManager(settings: SettingsStore.load())
 
         buildMainMenu()          // App 菜单(⌘, 设置 / ⌘Q) + 编辑菜单(⌘V 粘贴修复)
@@ -24,27 +21,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             showAccessibilityAlert()
             scheduleTrustPoll()
         }
-    }
-
-    // MARK: - B站极简搜索入口（一次性加入「娱乐」组）
-
-    /// 把「B站极简搜索」站点加进「娱乐」组并设为默认打开页（他律模式：只见搜索框）。
-    /// 标记位防止用户手动删除该站点后又自动加回。
-    private static func ensureBiliSearchEntry() {
-        let flag = "kanwindow.biliSearchEntryAdded"
-        guard !UserDefaults.standard.bool(forKey: flag) else { return }
-
-        var settings = SettingsStore.load()
-        guard let idx = settings.groups.firstIndex(where: { $0.name == "娱乐" }) else { return }
-        let url = BiliSearchServer.baseURL
-        if settings.groups[idx].sites.contains(where: { $0.url.contains("127.0.0.1") }) {
-            UserDefaults.standard.set(true, forKey: flag)
-            return
-        }
-        settings.groups[idx].sites.insert(SiteConfig(name: "B站极简搜索", url: url), at: 0)
-        settings.groups[idx].activeSiteIndex = 0
-        SettingsStore.save(settings)
-        UserDefaults.standard.set(true, forKey: flag)
     }
 
     // MARK: - 主菜单

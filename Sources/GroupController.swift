@@ -283,7 +283,16 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         w.isRestorable = false
         w.delegate = self
 
-        let wv = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
+        // B站页面清理（他律模式）：对 bilibili.com 各页面注入清理脚本，
+        // 隐藏推荐流/相关推荐/娱乐入口，保留搜索、播放器与评论区
+        let config = WKWebViewConfiguration()
+        if let cleanJS = Self.biliCleanScript {
+            config.userContentController.addUserScript(
+                WKUserScript(source: cleanJS,
+                             injectionTime: .atDocumentStart,
+                             forMainFrameOnly: true))
+        }
+        let wv = WKWebView(frame: .zero, configuration: config)
         wv.allowsMagnification = true
         wv.customUserAgent = Config.userAgent   // 伪装较新 Safari，解决部分站点“浏览器版本过低”
         wv.navigationDelegate = self
@@ -297,6 +306,14 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             center(w)
         }
         self.window = w
+    }
+
+    private static var biliCleanScript: String? {
+        guard let url = Bundle.main.url(forResource: "bilibiliClean", withExtension: "js"),
+              let s = try? String(contentsOf: url, encoding: .utf8) else {
+            return nil
+        }
+        return s
     }
 
     private func loadCurrentSiteIfChanged() {
