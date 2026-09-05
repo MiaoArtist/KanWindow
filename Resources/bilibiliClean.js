@@ -1,7 +1,9 @@
-// 窥窗 · B站全面封锁（他律模式，v2）
+// 窥窗 · B站全面封锁（他律模式，v3）
 // 只保留：搜索框 / 搜索结果列表 / 播放器 / 评论区。
 // 其余一切（信息流、热搜、分区、动态、排行榜、UP主区、点赞条、简介、相关推荐、
 // “接下来播放”、分P选集、footer 等）一律删除，并持续轮询+观察，删除后自动再删。
+// v3：修正播放页判定方向（判断“块是否包含播放器”而不是“播放器包含块”），
+//     播放器未渲染前一律不动 —— 宁可漏删，绝不误删播放器。
 (function () {
   'use strict';
 
@@ -23,7 +25,7 @@
 
   var KILL_TEXTS = ['相关推荐', '接下来播放', '热门视频', '为你推荐', '更多视频'];
 
-  // 文本匹配：删除标题文本命中的区块（B站改版时选择器变化也能兜住）
+  // 文本匹配：标题法删除命中区块（只查标题类节点，性能可控）
   function killByText() {
     var nodes = document.querySelectorAll('h2, h3, .section-title, .title, [class*="section-title"], [class*="panel-title"]');
     nodes.forEach(function (h) {
@@ -36,18 +38,17 @@
         }
       }
     });
-    // 热搜 / 大家都在搜
+    // 热搜 / 大家都在搜（限定在容器类里找，不做全局扫描）
     ['大家都在搜', '热门搜索', '热搜榜', '热搜'].forEach(function (txt) {
-      document.querySelectorAll('li, div').forEach(function (el) {
-        var t = (el.textContent || '').trim();
-        if (t === txt || t.indexOf(txt) === 0) {
-          hide(el.closest('ul, section, [class*="hot"], [class*="sug"], [class*="panel"]') || el);
-        }
-      });
+      document.querySelectorAll('[class*="hot"], [class*="sug"], [class*="suggestion"], [class*="panel"], [class*="rank"]')
+        .forEach(function (el) {
+          var t = (el.textContent || '').trim();
+          if (t === txt || t.indexOf(txt) === 0) hide(el.closest('[class*="hot"]') || el);
+        });
     });
   }
 
-  // 顶栏瘦身：删左侧导航与右侧入口整组；保留搜索框（找不到输入框时宁可保留顶栏，绝不误删搜索框）
+  // 顶栏瘦身：删左侧导航与右侧入口整组；搜索框找不到时宁可保留顶栏，绝不误删搜索框
   function slimHeader() {
     document.querySelectorAll('.bili-header__bar .left-entry, .bili-header__bar .right-entry, .left-entry, .right-entry')
       .forEach(hide);
@@ -80,11 +81,9 @@
       var sib = hdr ? hdr.nextElementSibling : null;
       while (sib) { var n = sib; sib = sib.nextElementSibling; remove(n); }
     }
-    // 分区/频道/排行榜等独立入口块
     document.querySelectorAll('[class*="channel-nav"], [class*="regions"], [class*="rank"], [id*="rank"], [class*="pop-links"], [class*="channel"]')
       .forEach(remove);
     killByText();
-    // 聚焦搜索框
     try {
       var q = document.querySelector('.bili-header__bar input, .bili-header input[type="search"], .nav-search-input');
       if (q && document.activeElement !== q) q.focus();
@@ -107,22 +106,28 @@
   // 播放页：只留播放器 + 评论区
   function cleanWatch() {
     slimHeader();
-    var player = document.querySelector('#bpx-player-wrap, #bofqi, .bpx-player-container, [class*="player-container"]');
-    var comments = document.querySelector('#comment-app, #comment, .comment-container, [class*="comment-app"], [class*="comment-container"]');
-    if (!player) return;   // 播放器没找到就保守不动
+    var player = document.querySelector('#bpx-player-wrap, #bofqi, .bpx-player-container, [class*="bpx-player"]');
+    if (!player) return;   // 播放器还没渲染出来之前一律不动，绝不误删
+
+    var comments = document.querySelector('#comment-app, #comment, .comment-container, [class*="comment-app"], [class*="comment"]');
 
     // 主内容区：只保留“包含播放器”和“包含评论区”的块，其余整块隐藏
-    document.querySelectorAll('#biliMainContent, [class*="video-container-v1"], [class*="video-container"]')
-      .forEach(function (c) {
-        var kids = Array.prototype.slice.call(c.children);
-        kids.forEach(function (el) {
-          if (el === player || (player && player.contains ? player.contains(el) : false)) return;
-          if (el === comments || (comments && comments.contains ? comments.contains(el) : false)) return;
-          hide(el);
+    // （找齐评论区后才做整块清理，避免误删；评论区晚渲染时由轮询兜底）
+    if (comments) {
+      document.querySelectorAll('#biliMainContent, #video-page-app, [class*="video-container-v1"], [class*="video-container"]')
+        .forEach(function (c) {
+          if (!c || !c.children) return;
+          var kids = Array.prototype.slice.call(c.children);
+          kids.forEach(function (el) {
+            if (!el || !el.contains) return;
+            if (el === player || el.contains(player)) return;
+            if (el === comments || el.contains(comments)) return;
+            hide(el);
+          });
         });
-      });
+    }
 
-    // 黑名单兜底（结构变化时）
+    // 黑名单兜底（结构变化时也能删掉已知噪音块）
     var sels = [
       '#reco_list', '#recommend_list', '#relevant_recommendation',
       '.recommend-list-v1', '.rec-footer', '#bottom-reco',
