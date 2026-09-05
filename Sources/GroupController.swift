@@ -365,7 +365,52 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         return false
     }
 
+    // MARK: - B站封锁：导航白名单防火墙（第二道锁，比清理脚本更硬）
+    // 只允许 首页 / 视频播放页 / 搜索结果页；live/t/space/bangumi/popular/list/
+    // 登录/移动版等一切其它 bilibili 页面与外部链接一律拦截 —— 没有任何方法逃回完整站点。
+
+    private static let allowedBiliHosts: Set<String> = [
+        "bilibili.com", "www.bilibili.com", "search.bilibili.com"
+    ]
+
+    func webView(_ webView: WKWebView,
+                 decidePolicyFor navigationAction: WKNavigationAction,
+                 decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = navigationAction.request.url, url.host != nil else {
+            decisionHandler(.allow)
+            return
+        }
+        let host = (url.host ?? "").lowercased()
+        let isBili = host == "bilibili.com" || host.hasSuffix(".bilibili.com")
+
+        if !isBili {
+            // 非 B 站域名（豆包/DeepSeek 等）：维持原有行为，不拦截
+            decisionHandler(.allow)
+            return
+        }
+
+        // bilibili 域内：白名单放行
+        if Self.allowedBiliHosts.contains(host) {
+            if host.hasPrefix("search.") {
+                decisionHandler(.allow)          // 搜索结果页放行
+            } else {
+                let p = url.path
+                if p == "/" || p.hasPrefix("/video/") {
+                    decisionHandler(.allow)      // 首页 / 播放页放行
+                } else {
+                    decisionHandler(.cancel)     // 频道/排行/列表/直播等一律封锁
+                }
+            }
+            return
+        }
+
+        // 其它 bilibili 子域（live. t. space. bangumi. manga. game. show. vc.
+        // passport. member. message. m. 等）→ 全部封锁
+        decisionHandler(.cancel)
+    }
+
     // MARK: - 新窗口 / 新标签页处理（target=_blank / window.open 的链接点不进去的问题）
+    // 注意：交由上面的导航防火墙统一裁决（createWebViewWith 手动 load 一样会过 decidePolicyFor）
 
     func webView(_ webView: WKWebView,
                  createWebViewWith configuration: WKWebViewConfiguration,
