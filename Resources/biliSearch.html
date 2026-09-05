@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>极简B站</title>
+<style>
+:root{--bg:#0e1116;--panel:#161b22;--line:#21262d;--fg:#e6edf3;--dim:#8b949e;--acc:#3fb27f}
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:var(--bg);color:var(--fg);font:15px/1.6 -apple-system,"PingFang SC","Helvetica Neue",sans-serif;min-height:100vh;-webkit-font-smoothing:antialiased}
+.wrap{max-width:760px;margin:0 auto;padding:26px 18px 90px}
+header{display:flex;gap:10px;align-items:center;margin-bottom:24px}
+h1{font-size:15px;font-weight:600;color:var(--dim);white-space:nowrap;letter-spacing:.5px}
+#q{flex:1;min-width:0;background:var(--panel);border:1px solid var(--line);color:var(--fg);border-radius:8px;padding:10px 14px;font-size:16px;outline:none}
+#q:focus{border-color:var(--acc)}
+#btn{background:var(--acc);border:none;color:#04261a;border-radius:8px;padding:10px 20px;font-size:15px;font-weight:700;cursor:pointer;white-space:nowrap}
+#btn:active{opacity:.8}
+.item{display:block;width:100%;text-align:left;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:13px 15px;margin-bottom:10px;cursor:pointer;color:var(--fg);transition:border-color .12s}
+.item:hover{border-color:#38434e}
+.item .t{font-size:15px;font-weight:600;margin-bottom:7px;line-height:1.45;word-break:break-word}
+.item .m{font-size:12.5px;color:var(--dim);display:flex;gap:14px;flex-wrap:wrap}
+.more{width:100%;padding:11px;margin-top:4px;background:#21262d;color:var(--fg);border:none;border-radius:8px;cursor:pointer;font-size:14px}
+.more:active{opacity:.8}
+.back{background:none;border:1px solid var(--line);color:var(--dim);border-radius:8px;padding:8px 16px;margin-bottom:16px;cursor:pointer;font-size:14px}
+.back:hover{color:var(--fg)}
+.player{position:relative;width:100%;aspect-ratio:16/9;background:#000;border-radius:10px;overflow:hidden;margin-bottom:8px}
+.player iframe{position:absolute;inset:0;width:100%;height:100%;border:0}
+.sec{font-size:13px;color:var(--dim);margin:22px 2px 10px;letter-spacing:.5px}
+.cmt{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:12px 15px;margin-bottom:10px}
+.cmt .who{display:flex;gap:10px;align-items:baseline;font-size:12.5px;color:var(--dim);margin-bottom:7px;flex-wrap:wrap}
+.cmt .who b{color:var(--fg);font-weight:600}
+.cmt .msg{font-size:14.5px;white-space:pre-wrap;word-break:break-word}
+.empty{color:var(--dim);text-align:center;padding:70px 0;font-size:14px}
+.err{color:#ff7b72;text-align:center;padding:30px 0;font-size:14px}
+.note{color:#5b6570;text-align:center;padding:70px 0;font-size:13.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>极简B站</h1>
+    <input id="q" placeholder="搜索想看的视频…" autofocus autocomplete="off" spellcheck="false">
+    <button id="btn">搜索</button>
+  </header>
+  <div id="view"><div class="note">只搜索 · 无推荐 · 无弹幕</div></div>
+</div>
+<script>
+const $=id=>document.getElementById(id);
+const view=$('view');
+let kw='',page=1,total=0,cached=[],busy=false;
+
+function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+function cleanTitle(t){return String(t==null?'':t).replace(/<em[^>]*>|<\/em>/g,'');}
+function fmtPlay(p){if(p==null)return '—';if(typeof p==='string')return p;if(p>=100000000)return (p/100000000).toFixed(1)+'亿';if(p>=10000)return (p/10000).toFixed(1)+'万';return String(p);}
+function fmtTime(ts){if(!ts)return '—';const d=new Date(ts*1000);const p=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate());}
+async function jf(u){const r=await fetch(u);return r.json();}
+
+async function search(p){
+  if(busy)return;busy=true;
+  page=p||1;view.innerHTML='<div class="empty">搜索中…</div>';
+  let data;
+  try{data=await jf('/api/search?kw='+encodeURIComponent(kw)+'&page='+page);}
+  catch(e){view.innerHTML='<div class="err">网络错误，请重试</div>';busy=false;return;}
+  if(data.code!==0){view.innerHTML='<div class="err">接口受限（code '+data.code+'）'+(data.message?'：'+esc(data.message):'')+'</div>';busy=false;return;}
+  const items=(data.data&&data.data.result)||[];
+  total=(data.data&&data.data.numResults)||0;
+  cached=page===1?items:cached.concat(items);
+  renderList();busy=false;
+}
+
+function renderList(){
+  if(!cached.length){view.innerHTML='<div class="empty">没有找到相关视频</div>';return;}
+  let h='';
+  cached.forEach(r=>{
+    if(!r||!r.bvid)return;
+    h+='<div class="item" data-bv="'+esc(r.bvid)+'">'
+      +'<div class="t">'+esc(cleanTitle(r.title))+'</div>'
+      +'<div class="m"><span>UP主 '+esc(r.author||'未知')+'</span><span>'+fmtTime(r.pubdate)+'</span><span>播放 '+fmtPlay(r.play)+'</span></div>'
+      +'</div>';
+  });
+  if(cached.length<total)h+='<button class="more" id="more">加载更多（'+(cached.length)+'/'+total+'）</button>';
+  view.innerHTML=h;
+  view.querySelectorAll('.item').forEach(el=>{el.onclick=()=>openVideo(el.dataset.bv);});
+  const m=$('more');if(m)m.onclick=()=>search(page+1);
+}
+
+async function openVideo(bv){
+  view.innerHTML='<div class="empty">加载中…</div>';
+  let v;
+  try{v=await jf('/api/view?bvid='+encodeURIComponent(bv));}
+  catch(e){view.innerHTML='<div class="err">加载失败，请重试</div>';return;}
+  if(v.code!==0||!v.data){view.innerHTML='<div class="err">视频信息获取失败（code '+v.code+'）</div>';return;}
+  const aid=v.data.aid;
+  const src='https://player.bilibili.com/player.html?bvid='+encodeURIComponent(bv)
+    +'&page=1&high_quality=1&danmaku=0&autoplay=1';
+  let h='<button class="back" id="bk">‹ 返回列表</button>'
+    +'<div class="player"><iframe src="'+esc(src)+'" allowfullscreen allow="autoplay; encrypted-media; fullscreen"></iframe></div>'
+    +'<div class="sec">评论区</div><div id="cmts"><div class="empty">加载中…</div></div>';
+  view.innerHTML=h;
+  $('bk').onclick=()=>{renderList();};
+  const cmts=$('cmts');
+  try{
+    let replies=[];
+    for(let pn=1;pn<=2;pn++){
+      const c=await jf('/api/reply?aid='+aid+'&pn='+pn);
+      if(c.code===0&&c.data&&c.data.replies)replies=replies.concat(c.data.replies);
+    }
+    if(!replies.length){cmts.innerHTML='<div class="empty">暂无评论</div>';return;}
+    let h2='';
+    replies.forEach(r=>{
+      if(!r||!r.content)return;
+      const m=r.member||{};
+      h2+='<div class="cmt"><div class="who"><b>'+esc(m.uname||'匿名')+'</b>'
+        +'<span>'+fmtTime(r.ctime)+'</span><span>赞 '+fmtPlay(r.like)+'</span></div>'
+        +'<div class="msg">'+esc(r.content.message)+'</div></div>';
+    });
+    cmts.innerHTML=h2;
+  }catch(e){cmts.innerHTML='<div class="err">评论加载失败</div>';}
+}
+
+function doSearch(){
+  kw=$('q').value.trim();
+  if(!kw)return;
+  $('q').blur();
+  search(1);
+}
+$('btn').onclick=doSearch;
+$('q').addEventListener('keydown',e=>{if(e.key==='Enter')doSearch();});
+</script>
+</body>
+</html>

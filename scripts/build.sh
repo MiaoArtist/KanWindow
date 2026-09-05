@@ -14,7 +14,7 @@ cd "$ROOT"
 APP_NAME="窥窗"
 EXECUTABLE="KanWindow"
 BUNDLE_ID="dev.miaoartist.kanwindow"
-VERSION="0.5.4"
+VERSION="0.5.5"
 DEPLOY_TARGET="13.0"   # 最低支持 macOS 13（也就是本机 27.0 之前的所有版本）
 
 BUILD_DIR="$ROOT/build"
@@ -62,6 +62,10 @@ if [ -f "Resources/MenuBarIcon.png" ]; then
 fi
 if [ -f "Resources/MenuBarIcon@2x.png" ]; then
   cp "Resources/MenuBarIcon@2x.png" "$APP_DIR/Contents/Resources/MenuBarIcon@2x.png"
+fi
+# B站极简搜索页面（随 App 内置）
+if [ -f "Resources/biliSearch.html" ]; then
+  cp "Resources/biliSearch.html" "$APP_DIR/Contents/Resources/biliSearch.html"
 fi
 
 # 写入 PkgInfo（部分系统对 WKWebView 友好）
