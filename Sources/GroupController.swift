@@ -13,8 +13,6 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     private(set) var window: NSWindow?
     private var webView: WKWebView?
     private var loadedURL: String?
-    /// 本地服务桥（保持强引用，WKURLSchemeHandler 需要存活）
-    private var localBridge: KWLocalBridge?
     /// 最后一次用户在该浮窗内活动的时间（自动关闭的判据）
     private var lastActivity = Date.distantPast
     /// 显示前的前台 App（隐藏时把系统焦点还给它）
@@ -285,25 +283,14 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         w.isRestorable = false
         w.delegate = self
 
-        // 本地服务桥（AnkiConnect 等本机 WebUI 支持：https 页面 → http://127.0.0.1）
         let config = WKWebViewConfiguration()
         config.preferences.javaScriptCanOpenWindowsAutomatically = true
-        let bridge = KWLocalBridge()
-        config.setURLSchemeHandler(bridge, forURLScheme: "kwlocal")
-        self.localBridge = bridge
 
         // B站页面清理（他律模式）：对 bilibili.com 各页面注入清理脚本，
         // 隐藏推荐流/相关推荐/娱乐入口，保留搜索、播放器与评论区
         if let cleanJS = Self.biliCleanScript {
             config.userContentController.addUserScript(
                 WKUserScript(source: cleanJS,
-                             injectionTime: .atDocumentStart,
-                             forMainFrameOnly: true))
-        }
-        // 本地服务桥注入：页面里 http://127.0.0.1 请求走 kwlocal 通道
-        if let bridgeJS = Self.localBridgeScript {
-            config.userContentController.addUserScript(
-                WKUserScript(source: bridgeJS,
                              injectionTime: .atDocumentStart,
                              forMainFrameOnly: true))
         }
@@ -325,14 +312,6 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
 
     private static var biliCleanScript: String? {
         guard let url = Bundle.main.url(forResource: "bilibiliClean", withExtension: "js"),
-              let s = try? String(contentsOf: url, encoding: .utf8) else {
-            return nil
-        }
-        return s
-    }
-
-    private static var localBridgeScript: String? {
-        guard let url = Bundle.main.url(forResource: "localBridge", withExtension: "js"),
               let s = try? String(contentsOf: url, encoding: .utf8) else {
             return nil
         }

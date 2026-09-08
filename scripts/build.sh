@@ -14,7 +14,7 @@ cd "$ROOT"
 APP_NAME="窥窗"
 EXECUTABLE="KanWindow"
 BUNDLE_ID="dev.miaoartist.kanwindow"
-VERSION="0.5.10"
+VERSION="0.5.11"
 DEPLOY_TARGET="13.0"   # 最低支持 macOS 13（也就是本机 27.0 之前的所有版本）
 
 BUILD_DIR="$ROOT/build"
@@ -66,10 +66,6 @@ fi
 # B站页面清理脚本（他律模式，随 App 内置注入）
 if [ -f "Resources/bilibiliClean.js" ]; then
   cp "Resources/bilibiliClean.js" "$APP_DIR/Contents/Resources/bilibiliClean.js"
-fi
-# 本地服务桥脚本（AnkiConnect 等本机 WebUI 支持）
-if [ -f "Resources/localBridge.js" ]; then
-  cp "Resources/localBridge.js" "$APP_DIR/Contents/Resources/localBridge.js"
 fi
 
 # 写入 PkgInfo（部分系统对 WKWebView 友好）
