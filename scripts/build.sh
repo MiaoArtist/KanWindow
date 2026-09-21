@@ -14,7 +14,7 @@ cd "$ROOT"
 APP_NAME="窥窗"
 EXECUTABLE="KanWindow"
 BUNDLE_ID="dev.miaoartist.kanwindow"
-VERSION="0.5.11"
+VERSION="0.6.0"
 DEPLOY_TARGET="13.0"   # 最低支持 macOS 13（也就是本机 27.0 之前的所有版本）
 
 BUILD_DIR="$ROOT/build"
@@ -67,6 +67,12 @@ fi
 if [ -f "Resources/bilibiliClean.js" ]; then
   cp "Resources/bilibiliClean.js" "$APP_DIR/Contents/Resources/bilibiliClean.js"
 fi
+# 临时文本组编辑器（Markdown + 荧光笔，纯前端页面；marked 为 MIT 许可的解析库）
+for res in textEditor.html textEditor.css textEditor.js marked.min.js marked.LICENSE.txt; do
+  if [ -f "Resources/$res" ]; then
+    cp "Resources/$res" "$APP_DIR/Contents/Resources/$res"
+  fi
+done
 
 # 写入 PkgInfo（部分系统对 WKWebView 友好）
 printf "APPL????" > "$APP_DIR/Contents/PkgInfo"

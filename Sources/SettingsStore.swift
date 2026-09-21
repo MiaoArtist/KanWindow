@@ -9,6 +9,11 @@ final class SettingsStore {
     /// ① 数据格式：v0.2(浮窗) / v0.3(组+D/E动作) → v0.4(组+统一快捷键表)
     /// ② bundle id：旧版 `dev.miaoartist.aifloatwindow` 域 → 新版 `dev.miaoartist.kanwindow` 域（改名后不丢设置）
     static func load() -> AppSettings {
+        ensureDefaultTextGroup(loadBase())
+    }
+
+    /// 读取原始配置（含格式与 bundle id 迁移，不含 v0.6 文本组补丁）
+    private static func loadBase() -> AppSettings {
         let defaults = UserDefaults.standard
 
         // 1) 新 bundle id 域
@@ -27,6 +32,33 @@ final class SettingsStore {
 
         // 全新安装
         return defaultsInstall()
+    }
+
+    /// v0.6：为已有用户补一个内置「临时文本」组（只补一次；用户删掉后不再自动补回），
+    /// 同时补一个直达快捷键 ⌥⌘T（若该组合未被占用）。
+    private static let didAddTextGroupFlagKey = "didAddDefaultTextGroup_v060"
+
+    private static func ensureDefaultTextGroup(_ settings: AppSettings) -> AppSettings {
+        let defaults = UserDefaults.standard
+        if defaults.bool(forKey: didAddTextGroupFlagKey) { return settings }
+        defaults.set(true, forKey: didAddTextGroupFlagKey)
+        if settings.groups.contains(where: { $0.kind == .text }) { return settings }
+
+        var s = settings
+        let g = GroupConfig(id: Config.textGroupID, name: "临时文本", sites: [], kind: .text)
+        s.groups.append(g)
+        let taken = s.hotkeys.contains { cfg in
+            cfg.binding?.keyCode == Config.HotKey.textGroupKeyCode
+                && cfg.binding?.modifiers == Config.HotKey.switchModifiers
+        }
+        if !taken {
+            s.hotkeys.append(HotkeyConfig(
+                function: .specificGroup(g.id),
+                binding: HotKeyBinding(keyCode: Config.HotKey.textGroupKeyCode,
+                                       modifiers: Config.HotKey.switchModifiers)))
+        }
+        save(s)
+        return s
     }
 
     private static func decodeOrMigrate(_ data: Data) -> AppSettings? {
@@ -228,8 +260,13 @@ private struct LegacyV2Settings: Codable {
                         sites: [SiteConfig(name: p.name, url: p.url)],
                         enabled: p.enabled, idleMinutes: p.idleMinutes, frame: p.frame)
         }
+        // 老浮窗版没有文本组：过滤掉默认快捷键里“切换至文本组”那条，避免出现指向不存在组的死键
+        let baseHotkeys = AppSettings.defaults().hotkeys.filter { cfg in
+            if case .specificGroup = cfg.function { return false }
+            return true
+        }
         return AppSettings(groups: groups,
                            globalIdleMinutes: globalIdleMinutes,
-                           hotkeys: AppSettings.defaults().hotkeys)
+                           hotkeys: baseHotkeys)
     }
 }

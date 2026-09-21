@@ -11,9 +11,10 @@
 ## 🪟 Core concept: groups
 
 - **A group = one floating window.** A group holds **multiple websites**.
+- **A text group** is the other kind: no sites — it opens a Markdown scratchpad (see Features). It takes part in "next / previous group" cycling just like website groups.
 - **Switch to a group** (right-click menu on the menu bar, or a hotkey you assign) → that group becomes the "current group" and pops out; afterwards **⌥Space / left-click on the menu-bar icon** summons exactly that group.
 - Inside a group, use **⌥⌘D (next) / ⌥⌘E (previous)** to cycle between its websites. The window title shows "Group · Site", and each site keeps its own login/session.
-- Default config: one **AI 助手** group containing Doubao and DeepSeek — ready to toggle with D/E right after install.
+- Default config: an **AI 助手** group (Doubao, DeepSeek) plus a built-in **临时文本** (scratchpad) group, reachable with ⌥⌘T.
 
 ## ⌨️ Hotkeys (fully configurable)
 
@@ -37,6 +38,7 @@ Also fixed: **left-click menu-bar icon** = show/hide (no menu, no freeze); **⌘
 - 🎛 **Settings panel** (menu bar right-click → Settings, or ⌘,): three framed sections — **网址组** (name / enable / auto-close), **组内网址** (grayed out until a group is selected), **全局快捷键** (add/remove with ＋/−, pick function, record keys). Plus import/export JSON and restore defaults.
 - 📐 **Remembers position & size** per group, and remembers which site you were on when reopening.
 - 🎯 **Focus memory**: reopening a floating window restores the page's previous scroll position and in-page focus (e.g. a text box — start typing right away); hiding the window with a hotkey hands the system focus back to the app you were using before, so you can keep typing without clicking back.
+- 📝 **Scratchpad / text group (Markdown + highlighter)**: a "text group" opens a pure text box with Markdown support (headings, bold, italic, strikethrough, inline code, code blocks, lists, tasks, quotes, links, tables, rules) and **live rendering** (Edit / Split / Preview views). Its signature feature is a **highlighter**: pick a color in the toolbar to wrap the selection, or just type `==text==` (yellow), `$$text$$` / `¥¥text¥¥` (red) — green / blue / orange / purple / pink are also available — and both the editor and the preview colour it **as you type**. Content is auto-saved (survives auto-close and quit); opened with ⌥⌘T by default.
 - 🧐 **Full Bilibili lockdown (self-restraint mode)**: the 娱乐 group's Bilibili site is reduced to **search box, search results (with thumbnails), the player and comments only** — trending, channels, dynamics, rankings, uploader panels, like bars, related videos and "up next" are continuously removed. A navigation firewall additionally blocks all other Bilibili pages (`live.`, `t.`, `space.`, `bangumi.`, `/popular`, `/list`, login, mobile) and external jumps — no way back to the full site. Player quality / speed / danmaku controls all remain fully functional.
 - 📋 **Paste works**: a standard Edit menu is wired up, so ⌘V works in WebView text boxes.
 - 🔍 **Page zoom**: ⌘+ / ⌘- / ⌘0 zoom in / out / actual size for the current floating window (handy for desktop-oriented sites like Bilibili); trackpad pinch zoom also works.
@@ -75,7 +77,7 @@ Global hotkeys need the **Accessibility** permission:
 
 ## 🎛 Settings panel overview (three sections)
 
-- **① 网址组**: left list with an enable/disable checkbox; right side edits group name, auto-close minutes (leave empty = follow global). ＋/− add/remove groups.
+- **① 网址组**: left list with an enable/disable checkbox (a 📝 prefix marks text groups); right side edits group name, type (website / text), auto-close minutes (leave empty = follow global). ＋/− add/remove groups.
 - **② 组内网址**: **grayed out and locked until a group is selected above**; only then can you add/edit/remove that group's sites (name + URL).
 - **③ 全局快捷键**: each row = one "function + key". Click **＋** to add, select the row, choose the function, then press the "record" button and hit the new combo (Esc cancels; clear removes). See the hotkey table above.
 - **Bottom**: global auto-close minutes + an explanation; import / export / restore defaults / cancel / save.
@@ -84,6 +86,8 @@ Global hotkeys need the **Accessibility** permission:
 ## 🔁 Upgrading from older versions
 
 v0.2 panes / v0.3 groups (with ⌥⌘D/E actions and per-group hotkeys) migrate automatically into v0.4+: sites, positions, and the old D/E + group hotkeys all end up in the unified hotkey table, where you can keep editing.
+
+v0.6 appends a built-in 临时文本 (scratchpad) group after your existing groups and adds ⌥⌘T as a direct hotkey (added once; if you delete it, it won't come back).
 
 ## 🛠 Configuration storage
 
@@ -94,6 +98,8 @@ defaults export dev.miaoartist.kanwindow - -
 ```
 
 Prefer the settings panel's export/import.
+
+Scratchpad text is stored separately (not inside the settings JSON): `~/Library/Application Support/KanWindow/Text/<group-uuid>.md`.
 
 ## 🧪 Packaging a release
 
@@ -112,14 +118,17 @@ KanWindow/
 │   ├── Models.swift                   # groups / sites / hotkey table / global settings
 │   ├── SettingsStore.swift            # persistence, legacy migration, import/export
 │   ├── GlobalHotKey.swift             # Carbon global hotkeys (dynamic re-register)
-│   ├── GroupController.swift          # one window per group: WebView, group switching, zoom, auto-close
+│   ├── GroupController.swift          # one window per group: WebView/text editor, switching, zoom, auto-close
 │   ├── GroupManager.swift             # orchestration, hotkeys, show-all, auto-close watchdog
+│   ├── TextStore.swift                # scratchpad text read/write
 │   └── SettingsWindowController.swift # settings panel
 ├── Resources/
 │   ├── AppIcon.svg / MenuBarIcon.svg   # original SVG icon sources
 │   ├── AppIcon.icns                    # rendered app icon
 │   ├── MenuBarIcon.png(@2x)            # menu-bar template icon
-│   └── bilibiliClean.js                # Bilibili page-cleaner injection script (self-restraint mode)
+│   ├── bilibiliClean.js                # Bilibili page-cleaner injection script (self-restraint mode)
+│   ├── textEditor.html/.css/.js        # scratchpad editor (Markdown + highlighter, pure front-end)
+│   └── marked.min.js                   # Markdown parser (MIT; see marked.LICENSE.txt)
 ├── scripts/
 │   ├── build.sh           # build (.app), UNIVERSAL dual-arch, ad-hoc signing
 │   ├── package.sh         # zip a release

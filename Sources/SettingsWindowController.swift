@@ -15,6 +15,7 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
 
     // 组编辑器
     private let groupNameField = NSTextField()
+    private let groupKindPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let groupIdleField = NSTextField()
     private let groupEnableCheckbox = NSButton(checkboxWithTitle: "启用此组", target: nil, action: nil)
 
@@ -123,8 +124,14 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         groupEnableCheckbox.target = self
         groupEnableCheckbox.action = #selector(groupEditorChanged(_:))
 
+        groupKindPopup.addItems(withTitles: ["网址组", "文本组（Markdown + 荧光笔）"])
+        groupKindPopup.target = self
+        groupKindPopup.action = #selector(groupKindChanged(_:))
+        groupKindPopup.widthAnchor.constraint(equalToConstant: 230).isActive = true
+
         let groupForm = NSGridView(views: [
             [formLabel("组名称"), groupNameField],
+            [formLabel("类型"), groupKindPopup],
             [groupEnableCheckbox],
             [formLabel("自动关闭(分)"), groupIdleField, formNote("留空=全局")],
         ])
@@ -140,6 +147,8 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         groupButtons.addArrangedSubview(smallButton("＋", action: #selector(addGroup)))
         groupButtons.addArrangedSubview(smallButton("－", action: #selector(removeGroup)))
         groupButtons.addArrangedSubview(formNote("列表里勾选可启用/停用（停用不建窗口、不吃内存）"))
+        let kindNote = formNote("「文本组」不需要网址：打开是一个可输入 Markdown 的临时文本框，支持荧光笔，内容自动保存；用快捷键 ⌥⌘T 可直达。")
+        root.addArrangedSubview(kindNote)
 
         // ===== ② 组内网址（未选中组时整体置灰） =====
         sitesTitleLabel = sectionTitle("组内网址")
@@ -408,7 +417,9 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
             groupNameField.stringValue = ""
             groupIdleField.stringValue = ""
             groupEnableCheckbox.state = .off
+            groupKindPopup.selectItem(at: 0)
             setControl(groupNameField, enabled: false)
+            setControl(groupKindPopup, enabled: false)
             setControl(groupIdleField, enabled: false)
             setControl(groupEnableCheckbox, enabled: false)
             reloadSiteEditor()
@@ -416,9 +427,11 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         }
         let g = draft.groups[gi]
         setControl(groupNameField, enabled: true)
+        setControl(groupKindPopup, enabled: true)
         setControl(groupIdleField, enabled: true)
         setControl(groupEnableCheckbox, enabled: true)
         groupNameField.stringValue = g.name
+        groupKindPopup.selectItem(at: g.kind == .text ? 1 : 0)
         groupIdleField.stringValue = g.idleMinutes.map(String.init) ?? ""
         groupEnableCheckbox.state = g.enabled ? .on : .off
         reloadSiteEditor()
@@ -463,9 +476,12 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
 
     /// 组内网址区整体置灰（未选中组时）
     private func updateSitesEnabled() {
-        let on = selectedGroupIndex() != nil
+        let hasGroup = selectedGroupIndex() != nil
+        let isText = selectedGroupIndex().map { draft.groups[$0].kind == .text } ?? false
+        let on = hasGroup && !isText
         sitesTable.isEnabled = on
         sitesScroll.alphaValue = on ? 1.0 : 0.45
+        sitesTitleLabel.stringValue = isText ? "组内网址（文本组不需要）" : "组内网址"
         sitesTitleLabel.textColor = on ? .labelColor : .tertiaryLabelColor
         addSiteButton.isEnabled = on
         removeSiteButton.isEnabled = on
@@ -491,6 +507,7 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         guard let gi = selectedGroupIndex() else { return }
         draft.groups[gi].name = groupNameField.stringValue.isEmpty ? "未命名" : groupNameField.stringValue
         draft.groups[gi].enabled = groupEnableCheckbox.state == .on
+        draft.groups[gi].kind = groupKindPopup.indexOfSelectedItem == 1 ? .text : .web
         let t = groupIdleField.stringValue.trimmingCharacters(in: .whitespaces)
         draft.groups[gi].idleMinutes = t.isEmpty ? nil : Int(t)
     }
@@ -534,7 +551,7 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
                 cell.addSubview(cb)
                 pinCenter(cb, in: cell, leading: 6)
             } else {
-                addText(g.name, to: cell)
+                addText(g.kind == .text ? "📝 (g.name)" : g.name, to: cell)
             }
         } else if tableView === hotkeysTable {
             guard row < draft.hotkeys.count else { return nil }
@@ -619,6 +636,23 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         reloadSiteEditor()
     }
 
+    /// 切换组类型：文本组清掉网址；网址组若为空则补一个占位网址
+    @objc private func groupKindChanged(_ sender: NSPopUpButton) {
+        commitGroupEditor()
+        if let gi = selectedGroupIndex() {
+            if draft.groups[gi].kind == .text {
+                draft.groups[gi].sites = []
+            } else if draft.groups[gi].sites.isEmpty {
+                draft.groups[gi].sites = [SiteConfig(name: "新网址", url: "https://")]
+            }
+        }
+        reloadGroupsRows()
+        sitesTable.reloadData()
+        reloadSiteEditor()
+        updateSitesEnabled()
+        rebuildFunctionPopup()
+    }
+
     @objc private func siteEditorChanged(_ sender: NSControl) {
         commitSiteEditor()
         if sender === siteNameField {
@@ -667,7 +701,7 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
 
     @objc private func removeGroup() {
         guard draft.groups.count > 1 else {
-            presentAlert(text: "至少要保留一个网址组。")
+            presentAlert(text: "至少要保留一个组。")
             return
         }
         commitAllEditors()
@@ -689,7 +723,11 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
 
     @objc private func addSite() {
         guard let gi = selectedGroupIndex() else {
-            presentAlert(text: "请先选中一个网址组。")
+            presentAlert(text: "请先选中一个组。")
+            return
+        }
+        guard draft.groups[gi].kind != .text else {
+            presentAlert(text: "这是文本组，没有网址。若需要网址请把「类型」改为「网址组」。")
             return
         }
         commitSiteEditor()
@@ -707,8 +745,9 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
 
     @objc private func removeSite() {
         guard let gi = selectedGroupIndex() else { return }
+        guard draft.groups[gi].kind != .text else { return }
         guard draft.groups[gi].sites.count > 1 else {
-            presentAlert(text: "每个组至少要保留一个网址。")
+            presentAlert(text: "每个网址组至少要保留一个网址。")
             return
         }
         commitSiteEditor()
@@ -845,13 +884,13 @@ final class SettingsWindowController: NSObject, NSTableViewDataSource, NSTableVi
         let t = globalIdleField.stringValue.trimmingCharacters(in: .whitespaces)
         draft.globalIdleMinutes = (Int(t).flatMap { $0 >= 0 ? $0 : nil }) ?? 15
 
-        // 清理：空网址站点、空组、未录按键的快捷键行
-        for i in draft.groups.indices {
+        // 清理：空网址站点、空组、未录按键的快捷键行（文本组不参与网址校验）
+        for i in draft.groups.indices where draft.groups[i].kind == .web {
             draft.groups[i].sites.removeAll { $0.url.trimmingCharacters(in: .whitespaces).isEmpty }
         }
-        draft.groups.removeAll { $0.sites.isEmpty }
+        draft.groups.removeAll { $0.kind == .web && $0.sites.isEmpty }
         if draft.groups.isEmpty {
-            presentAlert(text: "至少需要一个包含网址的组。")
+            presentAlert(text: "至少需要一个组。")
             return
         }
         draft.hotkeys.removeAll { $0.binding == nil }

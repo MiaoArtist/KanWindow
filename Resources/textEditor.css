@@ -1,0 +1,101 @@
+:root{
+  --bg:#ffffff; --panel:#f4f4f6; --text:#1d1d1f; --muted:#8a8a8e;
+  --border:#d9d9de; --marker:#bdb6aa; --accent:#3b82f6;
+  --editor-font:13.5px/1.7 ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"PingFang SC",monospace;
+  --editor-pad:12px 14px;
+  color-scheme:light dark;
+}
+@media (prefers-color-scheme:dark){
+  :root{ --bg:#1e1f22; --panel:#25272b; --text:#e8e8ea; --muted:#9a9a9f; --border:#3a3c42; --marker:#6f6a63; --accent:#5b9dff; }
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--text);font:13px -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",sans-serif;overflow:hidden}
+#app{display:flex;flex-direction:column;height:100vh}
+
+/* ---------- 工具栏 ---------- */
+#toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:4px 9px;padding:6px 8px;background:var(--panel);border-bottom:1px solid var(--border);flex:0 0 auto;z-index:5}
+.tb-group{display:flex;align-items:center;gap:3px}
+.tb-label{font-size:11px;color:var(--muted);margin-right:2px}
+.tb{min-width:24px;height:22px;padding:0 5px;font-size:12px;line-height:1;border:1px solid var(--border);border-radius:5px;background:var(--bg);color:var(--text);cursor:pointer}
+.tb:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+.tb:active{transform:translateY(1px)}
+.tb-sep{width:1px;height:16px;background:var(--border);margin:0 2px}
+.pen{width:16px;height:16px;border-radius:50%;border:1px solid rgba(0,0,0,.28);cursor:pointer;padding:0}
+.pen:hover{transform:scale(1.18)}
+.pen[data-color=yellow]{background:#ffe58a}
+.pen[data-color=red]{background:#ffb3b3}
+.pen[data-color=green]{background:#b6f0b6}
+.pen[data-color=blue]{background:#a9d8ff}
+.pen[data-color=orange]{background:#ffd0a1}
+.pen[data-color=purple]{background:#d9b8ff}
+.pen[data-color=pink]{background:#ffc2e0}
+.tb-right{margin-left:auto;display:flex;align-items:center;gap:6px}
+#mode{display:inline-flex;border:1px solid var(--border);border-radius:6px;overflow:hidden}
+.mode-btn{border:0;background:var(--bg);color:var(--muted);font-size:11px;padding:3px 8px;cursor:pointer}
+.mode-btn.active{background:var(--accent);color:#fff}
+#stat{font-size:10.5px;color:var(--muted);white-space:nowrap}
+
+/* ---------- 编辑 / 预览 布局 ---------- */
+#panes{flex:1 1 auto;min-height:0;display:flex;flex-direction:column}
+#editor-pane{position:relative;flex:1 1 auto;min-height:0;overflow:hidden}
+#preview-pane{display:none;flex:1 1 auto;min-height:0;overflow:auto;border-top:1px solid var(--border);padding:12px 16px;background:var(--bg)}
+#panes.mode-preview #editor-pane{display:none}
+#panes.mode-preview #preview-pane{display:block}
+#panes.mode-split #editor-pane{flex:0 0 50%}
+#panes.mode-split #preview-pane{display:block;flex:1 1 auto}
+
+/* ---------- 编辑器与高亮背景层（两者度量必须完全一致）---------- */
+#hl-layer,#editor{position:absolute;top:0;left:0;width:100%;height:100%;margin:0;border:0;padding:var(--editor-pad);font:var(--editor-font);letter-spacing:normal;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word;tab-size:4}
+#hl-layer{z-index:1;overflow:hidden;background:var(--bg);color:var(--text);pointer-events:none}
+#editor{z-index:2;resize:none;outline:none;background:transparent;color:transparent;-webkit-text-fill-color:transparent;caret-color:var(--text);overflow:auto;scrollbar-width:none}
+#editor::-webkit-scrollbar{width:0;height:0}
+#editor::placeholder{color:var(--muted);-webkit-text-fill-color:var(--muted)}
+#editor::selection{background:rgba(59,130,246,.28)}
+/* 中文输入法组字期间：显示原始文本，隐藏高亮层，保证候选/组字可见 */
+body.composing #hl-layer{visibility:hidden}
+body.composing #editor{color:var(--text);-webkit-text-fill-color:var(--text)}
+
+/* ---------- 荧光笔颜色（编辑层与预览共用）---------- */
+.mk{color:var(--marker)}
+mark.hl{border-radius:2px;padding:0;color:#222}
+mark.hl-yellow{background:#ffe58a}
+mark.hl-red{background:#ffb3b3}
+mark.hl-green{background:#b6f0b6;color:#17300f}
+mark.hl-blue{background:#a9d8ff;color:#0b2540}
+mark.hl-orange{background:#ffd0a1;color:#3a2100}
+mark.hl-purple{background:#d9b8ff;color:#2a0a45}
+mark.hl-pink{background:#ffc2e0;color:#3a0022}
+mark.hl-gray{background:#d8d8d8;color:#222}
+@media (prefers-color-scheme:dark){
+  mark.hl{color:#1b1b1c}
+  mark.hl-yellow{background:#c9a82e}
+  mark.hl-red{background:#c96a6a}
+  mark.hl-green{background:#5fa35f}
+  mark.hl-blue{background:#5a8fc0}
+  mark.hl-orange{background:#c98f4e}
+  mark.hl-purple{background:#9a6fc0}
+  mark.hl-pink{background:#c06a97}
+  mark.hl-gray{background:#8a8a8a}
+}
+
+/* ---------- Markdown 预览 ---------- */
+#preview{max-width:900px;margin:0 auto;line-height:1.7;font-size:13.5px;word-wrap:break-word}
+#preview h1,#preview h2,#preview h3,#preview h4{margin:.85em 0 .4em;line-height:1.3}
+#preview h1{font-size:1.7em;border-bottom:1px solid var(--border);padding-bottom:.2em}
+#preview h2{font-size:1.4em;border-bottom:1px solid var(--border);padding-bottom:.15em}
+#preview h3{font-size:1.2em}
+#preview p{margin:.5em 0}
+#preview a{color:var(--accent)}
+#preview code{background:var(--panel);border:1px solid var(--border);border-radius:4px;padding:.1em .35em;font-family:ui-monospace,Menlo,monospace;font-size:.92em}
+#preview pre{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 12px;overflow:auto}
+#preview pre code{background:none;border:0;padding:0}
+#preview blockquote{margin:.6em 0;padding:.25em .9em;border-left:3px solid var(--accent);color:var(--muted);background:var(--panel);border-radius:0 6px 6px 0}
+#preview ul,#preview ol{padding-left:1.5em;margin:.4em 0}
+#preview li{margin:.15em 0}
+#preview table{border-collapse:collapse;margin:.6em 0;display:block;overflow:auto}
+#preview th,#preview td{border:1px solid var(--border);padding:4px 9px}
+#preview th{background:var(--panel)}
+#preview hr{border:0;border-top:1px solid var(--border);margin:1em 0}
+#preview img{max-width:100%}
+#preview input[type=checkbox]{margin-right:.4em}

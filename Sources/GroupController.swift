@@ -4,7 +4,7 @@ import UserNotifications
 
 /// 网址组的悬浮窗：一个组 = 一个窗口，组内多个网址在这个窗口里切换。
 /// 窗口懒创建（第一次 show 才建），停用/删除时释放。
-final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate {
+final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler {
 
     let id: UUID
     private var config: GroupConfig
@@ -13,6 +13,12 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     private(set) var window: NSWindow?
     private var webView: WKWebView?
     private var loadedURL: String?
+    /// 临时文本组：从页面收到的最新内容（用于防抖落盘 / 重载注入）
+    private var latestText: String?
+    /// 是否已把文本注入当前页面（防止 didFinish 重复注入覆盖正在输入的内容）
+    private var didInjectText = false
+    /// 文本落盘的防抖任务
+    private var pendingTextSave: DispatchWorkItem?
     /// 最后一次用户在该浮窗内活动的时间（自动关闭的判据）
     private var lastActivity = Date.distantPast
     /// 显示前的前台 App（隐藏时把系统焦点还给它）
@@ -69,6 +75,7 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     }
 
     func hide() {
+        flushText()              // 临时文本：隐藏前确保内容落盘
         captureFocusPosition()   // 隐藏前抓取网页内焦点/滚动位置
         window?.orderOut(nil)
         storeFrame()
@@ -76,6 +83,7 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     }
 
     func dispose() {
+        flushText()              // 临时文本：销毁前确保内容落盘
         captureFocusPosition()
         storeFrame()
         window?.orderOut(nil)
@@ -84,6 +92,7 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         // 关键：下次重新创建 WebView 时必须重新加载当前网址，
         // 否则 loadCurrentSiteIfChanged() 会认为“网址没变”而跳过加载 → 白屏
         loadedURL = nil
+        didInjectText = false
         restoreFrontmostApp()
     }
 
@@ -147,11 +156,41 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         }
     }
 
-    /// 刷新当前浮窗页面（重载当前网址）
+    /// 刷新当前浮窗页面（重载当前网址 / 文本编辑器）
     func reloadCurrentSite() {
         guard window != nil, let wv = webView else { return }
+        flushText()
         wv.reload()
         noteInteraction()
+    }
+
+    // MARK: - 临时文本组（Markdown + 荧光笔）
+    // 页面是一个纯前端编辑器（Resources/textEditor.*），原生只负责：
+    // 加载本地页面、注入已保存内容、接收页面防抖回传并落盘。
+
+    /// 把页面回传的最新文本立刻写入磁盘（取消尚未执行的防抖任务）
+    func flushText() {
+        guard config.kind == .text, let text = latestText else { return }
+        pendingTextSave?.cancel()
+        pendingTextSave = nil
+        TextStore.save(text, for: id)
+    }
+
+    /// 页面通过 window.webkit.messageHandlers.kwTextSave 回传内容
+    func userContentController(_ userContentController: WKUserContentController,
+                               didReceive message: WKScriptMessage) {
+        guard message.name == "kwTextSave", config.kind == .text,
+              let text = message.body as? String else { return }
+        latestText = text
+        noteInteraction()   // 打字也算活动，重置自动关闭计时
+        // 防抖 0.6s 落盘；隐藏 / 销毁 / 退出时会立即 flush
+        pendingTextSave?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self = self, let t = self.latestText else { return }
+            TextStore.save(t, for: self.id)
+        }
+        pendingTextSave = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
     }
 
     // MARK: - 页面缩放（⌘+ / ⌘- / ⌘0）
@@ -186,6 +225,13 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             if (!el || el === body || el === document.documentElement) {
               return {hasFocus:false, selector:null, scrollX:window.scrollX, scrollY:window.scrollY};
             }
+            var selStart = null, selEnd = null;
+            try {
+              if (typeof el.selectionStart === 'number') {
+                selStart = el.selectionStart;
+                selEnd = el.selectionEnd;
+              }
+            } catch (eSel) {}
             var path = [];
             var node = el;
             while (node && node.nodeType === 1 && node !== body && node !== document.documentElement) {
@@ -199,7 +245,7 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
               path.unshift(sel);
               node = parent;
             }
-            return {hasFocus:true, selector: path.join(' > ') || el.tagName.toLowerCase(), scrollX:window.scrollX, scrollY:window.scrollY};
+            return {hasFocus:true, selector: path.join(' > ') || el.tagName.toLowerCase(), scrollX:window.scrollX, scrollY:window.scrollY, selStart: selStart, selEnd: selEnd};
           } catch(e) {
             return {hasFocus:false, selector:null, scrollX:window.scrollX, scrollY:window.scrollY};
           }
@@ -219,9 +265,13 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         let selector = (info["selector"] as? String) ?? ""
         let sx = (info["scrollX"] as? NSNumber)?.doubleValue
         let sy = (info["scrollY"] as? NSNumber)?.doubleValue
+        let ss = (info["selStart"] as? NSNumber)?.intValue
+        let se = (info["selEnd"] as? NSNumber)?.intValue
         let selJSON = jsStringLiteral(selector)
         let sxJS = sx.map { "\($0)" } ?? "null"
         let syJS = sy.map { "\($0)" } ?? "null"
+        let ssJS = ss.map { "\($0)" } ?? "null"
+        let seJS = se.map { "\($0)" } ?? "null"
         let js = """
         (function(){
           if (\(sxJS) !== null && \(syJS) !== null) {
@@ -232,6 +282,9 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             try { el = document.querySelector(\(selJSON)); } catch(e) {}
             if (el) {
               try { el.focus({preventScroll:true}); } catch(e) { try { el.focus(); } catch(e2){} }
+              if (\(ssJS) !== null && \(seJS) !== null && typeof el.setSelectionRange === 'function') {
+                try { el.setSelectionRange(\(ssJS), \(seJS)); } catch(e3) {}
+              }
             }
           }
         })()
@@ -250,11 +303,20 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
 
     /// 把 Swift 字符串转成 JS 字符串字面量（安全转义）
     private func jsStringLiteral(_ s: String) -> String {
-        let escaped = s
-            .replacingOccurrences(of: "\\", with: "\\\\")
-            .replacingOccurrences(of: "\"", with: "\\\"")
-            .replacingOccurrences(of: "\n", with: "\\n")
-            .replacingOccurrences(of: "\r", with: "\\r")
+        var escaped = ""
+        for scalar in s.unicodeScalars {
+            switch scalar {
+            case "\\": escaped += "\\\\"
+            case "\"": escaped += "\\\""
+            case "\n": escaped += "\\n"
+            case "\r": escaped += "\\r"
+            case "\t": escaped += "\\t"
+            case "\u{2028}": escaped += "\\u2028"   // JS 里也是换行符，必须转义
+            case "\u{2029}": escaped += "\\u2029"
+            case "\0": escaped += "\\u0000"
+            default: escaped.unicodeScalars.append(scalar)
+            }
+        }
         return "\"\(escaped)\""
     }
 
@@ -262,8 +324,9 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
 
     private func createWindowIfNeeded(rememberedFrame remembered: FrameSnapshot?) {
         guard window == nil else { return }
-        // 新窗口 = 全新 WebView，必须强制加载当前网址
+        // 新窗口 = 全新 WebView，必须强制加载当前内容
         loadedURL = nil
+        didInjectText = false
 
         let w = NSWindow(
             contentRect: NSRect(x: 0, y: 0,
@@ -283,18 +346,21 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         w.isRestorable = false
         w.delegate = self
 
-        let config = WKWebViewConfiguration()
-        config.preferences.javaScriptCanOpenWindowsAutomatically = true
+        let wkConfig = WKWebViewConfiguration()
+        wkConfig.preferences.javaScriptCanOpenWindowsAutomatically = true
 
         // B站页面清理（他律模式）：对 bilibili.com 各页面注入清理脚本，
-        // 隐藏推荐流/相关推荐/娱乐入口，保留搜索、播放器与评论区
+        // 隐藏推荐流/相关推荐/娱乐入口，保留搜索、播放器与评论区。
+        // （脚本自身有 host 判断，非 bilibili 页面直接 return，文本组页面不受影响）
         if let cleanJS = Self.biliCleanScript {
-            config.userContentController.addUserScript(
+            wkConfig.userContentController.addUserScript(
                 WKUserScript(source: cleanJS,
                              injectionTime: .atDocumentStart,
                              forMainFrameOnly: true))
         }
-        let wv = WKWebView(frame: .zero, configuration: config)
+        // 临时文本组：接收页面回传的文本内容（弱引用包装，避免 WKUserContentController 强引用 self）
+        wkConfig.userContentController.add(WeakScriptMessageHandler(self), name: "kwTextSave")
+        let wv = WKWebView(frame: .zero, configuration: wkConfig)
         wv.allowsMagnification = true
         wv.customUserAgent = Config.userAgent   // 伪装较新 Safari，解决部分站点“浏览器版本过低”
         wv.navigationDelegate = self
@@ -319,13 +385,28 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     }
 
     private func loadCurrentSiteIfChanged() {
+        if config.kind == .text {
+            loadTextEditorIfNeeded()
+            return
+        }
         guard let site = config.activeSite, !site.url.isEmpty, let url = URL(string: site.url) else { return }
         if loadedURL == site.url { return }
         loadedURL = site.url
         webView?.load(URLRequest(url: url))
     }
 
+    /// 文本组：加载本地编辑器页面（只在未加载时加载；内容在 didFinish 里注入）
+    private func loadTextEditorIfNeeded() {
+        let key = "file://text-editor"
+        if loadedURL == key { return }
+        loadedURL = key
+        didInjectText = false
+        guard let html = Bundle.main.url(forResource: "textEditor", withExtension: "html") else { return }
+        webView?.loadFileURL(html, allowingReadAccessTo: html.deletingLastPathComponent())
+    }
+
     private func titleText() -> String {
+        if config.kind == .text { return config.name }
         let siteName = config.activeSite?.name
         return siteName.map { "\(config.name) · \($0)" } ?? config.name
     }
@@ -436,9 +517,27 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         loadCurrentSiteIfChanged()
     }
 
+    func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        // 任何导航/重载开始都重置注入标记，确保文本页面重载后能再次注入内容
+        didInjectText = false
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        // 临时文本组：把已保存内容注入页面
+        if config.kind == .text {
+            injectTextIfNeeded(into: webView)
+        }
         // 页面（重新）加载完成 → 恢复上次的焦点/滚动位置
         restoreFocusAndScroll()
+    }
+
+    private func injectTextIfNeeded(into webView: WKWebView) {
+        guard !didInjectText else { return }
+        didInjectText = true
+        let text = latestText ?? TextStore.load(id)
+        latestText = text
+        webView.evaluateJavaScript("window.KW && window.KW.setText(\(jsStringLiteral(text)));",
+                                   completionHandler: nil)
     }
 
 
@@ -453,5 +552,16 @@ final class GroupController: NSObject, NSWindowDelegate, WKNavigationDelegate, W
                                             content: content,
                                             trigger: nil)
         UNUserNotificationCenter.current().add(request)
+    }
+}
+
+/// 弱引用包装：WKUserContentController 会强引用 message handler，
+/// 直接用 GroupController 会导致自引用无法释放。
+private final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+    weak var target: WKScriptMessageHandler?
+    init(_ target: WKScriptMessageHandler) { self.target = target }
+    func userContentController(_ userContentController: WKUserContentController,
+                               didReceive message: WKScriptMessage) {
+        target?.userContentController(userContentController, didReceive: message)
     }
 }

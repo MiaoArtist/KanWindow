@@ -63,6 +63,7 @@ final class GroupManager {
             if let w = c.window {
                 applyFrame(FrameSnapshot(from: w.frame), for: id, save: false)
             }
+            c.flushText()   // 临时文本组：退出前把未落盘的内容写入磁盘
         }
         SettingsStore.save(settings)
     }

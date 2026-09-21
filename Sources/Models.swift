@@ -110,7 +110,14 @@ struct FrameSnapshot: Codable, Equatable {
     }
 }
 
-/// 网址组：一个组 = 一个悬浮窗；组内多个网址用快捷键在组内切换
+/// 组的类型：普通网址组 / 内置「临时文本」组（Markdown 编辑 + 荧光笔）
+enum GroupKind: String, Codable, Equatable {
+    case web
+    case text
+}
+
+/// 网址组：一个组 = 一个悬浮窗；组内多个网址用快捷键在组内切换。
+/// kind == .text 时为「临时文本」组：不加载网址，而是打开一个 Markdown 文本框。
 struct GroupConfig: Codable, Equatable, Identifiable {
     var id: UUID
     var name: String
@@ -119,6 +126,7 @@ struct GroupConfig: Codable, Equatable, Identifiable {
     var idleMinutes: Int?        // 组独立自动关闭分钟数（nil=跟随全局）
     var frame: FrameSnapshot?    // 记住位置与尺寸
     var activeSiteIndex: Int     // 上次打开到组内第几个网址
+    var kind: GroupKind          // 网址组 / 临时文本组
 
     init(id: UUID = UUID(),
          name: String,
@@ -126,7 +134,8 @@ struct GroupConfig: Codable, Equatable, Identifiable {
          enabled: Bool = true,
          idleMinutes: Int? = nil,
          frame: FrameSnapshot? = nil,
-         activeSiteIndex: Int = 0) {
+         activeSiteIndex: Int = 0,
+         kind: GroupKind = .web) {
         self.id = id
         self.name = name
         self.sites = sites
@@ -134,7 +143,27 @@ struct GroupConfig: Codable, Equatable, Identifiable {
         self.idleMinutes = idleMinutes
         self.frame = frame
         self.activeSiteIndex = activeSiteIndex
+        self.kind = kind
     }
+
+    enum CodingKeys: String, CodingKey {
+        case id, name, sites, enabled, idleMinutes, frame, activeSiteIndex, kind
+    }
+
+    /// 手写解码：老版本配置里没有 kind 字段，缺失时按普通网址组处理（向后兼容）
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decodeIfPresent(String.self, forKey: .name) ?? "组"
+        sites = try c.decodeIfPresent([SiteConfig].self, forKey: .sites) ?? []
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? true
+        idleMinutes = try c.decodeIfPresent(Int.self, forKey: .idleMinutes)
+        frame = try c.decodeIfPresent(FrameSnapshot.self, forKey: .frame)
+        activeSiteIndex = try c.decodeIfPresent(Int.self, forKey: .activeSiteIndex) ?? 0
+        kind = try c.decodeIfPresent(GroupKind.self, forKey: .kind) ?? .web
+    }
+
+    var isText: Bool { kind == .text }
 
     func effectiveIdle(global: Int) -> Int {
         idleMinutes ?? global
@@ -265,12 +294,17 @@ struct AppSettings: Codable, Equatable {
     var hotkeys: [HotkeyConfig]
 
     static func defaults() -> AppSettings {
-        AppSettings(
+        let textGroup = GroupConfig(id: Config.textGroupID,
+                                    name: "临时文本",
+                                    sites: [],
+                                    kind: .text)
+        return AppSettings(
             groups: [
                 GroupConfig(name: "AI 助手", sites: [
                     SiteConfig(name: "豆包", url: "https://www.doubao.com/"),
                     SiteConfig(name: "DeepSeek", url: "https://chat.deepseek.com/"),
                 ]),
+                textGroup,
             ],
             globalIdleMinutes: 15,
             hotkeys: [
@@ -285,6 +319,10 @@ struct AppSettings: Codable, Equatable {
                 HotkeyConfig(
                     function: .previousSite,
                     binding: HotKeyBinding(keyCode: Config.HotKey.switchKeyCodeE,
+                                            modifiers: Config.HotKey.switchModifiers)),
+                HotkeyConfig(
+                    function: .specificGroup(textGroup.id),
+                    binding: HotKeyBinding(keyCode: Config.HotKey.textGroupKeyCode,
                                             modifiers: Config.HotKey.switchModifiers)),
             ]
         )

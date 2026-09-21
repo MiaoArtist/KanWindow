@@ -16,12 +16,16 @@ enum Config {
     static let userAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         + "AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4 Safari/605.1.15"
 
+    /// 内置「临时文本」组的固定 id：迁移/重置时保持一致，文本内容文件不会因换 UUID 而丢失
+    static let textGroupID = UUID(uuidString: "5C7A1E00-0000-4000-8000-000000000001")!
+
     /// 全局快捷键（键可在这里改）
     /// 键码：Space=49、D=2、E=14（ANSI 布局，字母不是顺序号）
     enum HotKey {
         static let toggleKeyCode: UInt32 = 49            // Space
         static let switchKeyCodeD: UInt32 = 2            // D
         static let switchKeyCodeE: UInt32 = 14           // E
+        static let textGroupKeyCode: UInt32 = 17         // T（直达「临时文本」组）
         static let toggleModifiers: UInt32 = GlobalHotKey.Mods.option
         static let switchModifiers: UInt32 = GlobalHotKey.Mods.option | GlobalHotKey.Mods.command
     }

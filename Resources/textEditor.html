@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>临时文本 · 窥窗</title>
+<link rel="stylesheet" href="textEditor.css">
+</head>
+<body>
+<div id="app">
+  <div id="toolbar">
+    <div class="tb-group">
+      <button class="tb" data-cmd="h1" title="一级标题">H1</button>
+      <button class="tb" data-cmd="h2" title="二级标题">H2</button>
+      <button class="tb" data-cmd="h3" title="三级标题">H3</button>
+      <span class="tb-sep"></span>
+      <button class="tb" data-cmd="bold" title="加粗 (⌘B)"><b>B</b></button>
+      <button class="tb" data-cmd="italic" title="斜体 (⌘I)"><i>I</i></button>
+      <button class="tb" data-cmd="strike" title="删除线"><s>S</s></button>
+      <button class="tb" data-cmd="code" title="行内代码">&lt;/&gt;</button>
+      <span class="tb-sep"></span>
+      <button class="tb" data-cmd="ul" title="无序列表">•</button>
+      <button class="tb" data-cmd="ol" title="有序列表">1.</button>
+      <button class="tb" data-cmd="task" title="任务清单">☑</button>
+      <button class="tb" data-cmd="quote" title="引用">❝</button>
+      <button class="tb" data-cmd="codeblock" title="代码块">{ }</button>
+      <button class="tb" data-cmd="link" title="链接">🔗</button>
+      <button class="tb" data-cmd="table" title="表格">▦</button>
+      <button class="tb" data-cmd="hr" title="分隔线">—</button>
+    </div>
+    <div class="tb-group">
+      <span class="tb-label">荧光笔</span>
+      <button class="pen" data-color="yellow" title="黄色（也可用 ==文字==）"></button>
+      <button class="pen" data-color="red" title="红色（也可用 $$文字$$ 或 ¥¥文字¥¥）"></button>
+      <button class="pen" data-color="green" title="绿色"></button>
+      <button class="pen" data-color="blue" title="蓝色"></button>
+      <button class="pen" data-color="orange" title="橙色"></button>
+      <button class="pen" data-color="purple" title="紫色"></button>
+      <button class="pen" data-color="pink" title="粉色"></button>
+      <button class="tb" data-cmd="highlight-clear" title="清除选中文字/整行的荧光笔标记">清除</button>
+    </div>
+    <div class="tb-group tb-right">
+      <div id="mode" role="tablist">
+        <button class="mode-btn active" data-mode="edit" title="只显示编辑区">编辑</button>
+        <button class="mode-btn" data-mode="split" title="上编辑、下预览">分栏</button>
+        <button class="mode-btn" data-mode="preview" title="只显示 Markdown 渲染结果">预览</button>
+      </div>
+      <span id="stat"></span>
+    </div>
+  </div>
+  <div id="panes" class="mode-edit">
+    <div id="editor-pane">
+      <div id="hl-layer" aria-hidden="true"></div>
+      <textarea id="editor" spellcheck="false" autocomplete="off" autocorrect="off" autocapitalize="off"
+        placeholder="在这里写点什么…&#10;支持 Markdown；用 ==文字== 涂黄，$$文字$$ 或 ¥¥文字¥¥ 涂红，也可用上方荧光笔。&#10;内容会自动保存，弹窗关掉也不会丢。"></textarea>
+    </div>
+    <div id="preview-pane"><article id="preview"></article></div>
+  </div>
+</div>
+<script src="marked.min.js"></script>
+<script src="textEditor.js"></script>
+</body>
+</html>
